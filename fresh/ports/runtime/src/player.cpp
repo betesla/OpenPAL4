@@ -167,4 +167,57 @@ void PlayerRoster::SetRotation(std::uint32_t index,std::array<float,3> rotation)
     for(auto& value:rotation)value=pal4::NormalizeResourceRotationAngle(value);
     slots_[index].rotation=rotation;
 }
+void PlayerRoster::SetFullHp() {
+    Require(prepared_,"full HP requires prepared players");
+    for(auto& slot:slots_)if(slot.inventory_enabled){
+        slot.progress.hp=Health(Signed(slot.progress.effective.core[0]),slot.progress.effective.core[0]);
+        slot.progress.dead=slot.progress.hp<=0;
+    }
+}
+void PlayerRoster::SetFullMp() {
+    Require(prepared_,"full MP requires prepared players");
+    for(auto& slot:slots_)if(slot.inventory_enabled){
+        slot.progress.mp=Health(Signed(slot.progress.effective.core[2]),slot.progress.effective.core[2]);
+    }
+}
+void PlayerRoster::SetHealth(std::uint32_t index,std::int32_t hp,std::int32_t mp) {
+    Require(prepared_ && index<slots_.size(),"player health update requires prepared slot");
+    auto& p=slots_[index].progress;
+    p.hp=Health(hp,p.effective.core[0]);
+    p.mp=Health(mp,p.effective.core[2]);
+    p.dead=p.hp<=0;
+}
+void PlayerRoster::SetFullRage() {
+    Require(prepared_,"full rage requires prepared players");
+    for(auto& slot:slots_)if(slot.inventory_enabled)slot.progress.rage=100;
+}
+void PlayerRoster::TakeARest() {
+    Require(prepared_,"player rest requires prepared players");
+    SetFullHp();
+    SetFullMp();
+}
+void PlayerRoster::SetLevel(std::int32_t index,std::int32_t level) {
+    Require(prepared_ && index>=0 && static_cast<std::size_t>(index)<slots_.size() && level>=1 && level<=99,"invalid player level update");
+    slots_[static_cast<std::size_t>(index)].progress.level=level;
+}
+std::int32_t PlayerRoster::GetLevel(std::int32_t index) const {
+    Require(prepared_ && index>=0 && static_cast<std::size_t>(index)<slots_.size(),"invalid player level query");
+    return slots_[static_cast<std::size_t>(index)].progress.level;
+}
+void PlayerRoster::AddSkill(std::int32_t index,std::uint32_t skill_id) {
+    Require(prepared_ && index>=0 && static_cast<std::size_t>(index)<slots_.size(),"invalid player skill target");
+    auto& skills=slots_[static_cast<std::size_t>(index)].skills;
+    if(std::find(skills.begin(),skills.end(),skill_id)==skills.end())skills.push_back(skill_id);
+}
+void PlayerRoster::AddFavor(std::int32_t first_index,std::int32_t second_index,std::int32_t delta) {
+    Require(prepared_,"player favor update requires prepared players");
+    if(first_index<0 || static_cast<std::size_t>(first_index)>=slots_.size())return;
+    if(second_index<0 || static_cast<std::size_t>(second_index)>=slots_.size())return;
+    auto& cell=slots_[static_cast<std::size_t>(first_index)].favor[static_cast<std::size_t>(second_index)];
+    cell=std::max<std::int32_t>(0,cell+delta);
+}
+void PlayerRoster::SetVisible(std::int32_t index,bool visible) {
+    Require(prepared_ && index>=0 && static_cast<std::size_t>(index)<slots_.size(),"invalid player visibility target");
+    slots_[static_cast<std::size_t>(index)].visible=visible;
+}
 } // namespace pal4::portable

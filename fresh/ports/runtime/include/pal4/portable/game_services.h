@@ -16,9 +16,12 @@ struct GameServices final:IScriptContextServices {
     std::function<void()> seek_camera_player,flush_camera_tail_yaw;
     std::function<void(bool)> set_camera_distance;
     std::function<void(std::int32_t)> set_leader;
+    std::function<std::int32_t()> get_leader;
+    std::function<void(std::int32_t,bool)> add_team_member,remove_team_member;
     std::function<void(bool)> set_auto_seek;
     std::function<void()> lock_player,unlock_player;
     std::function<void(Point3)> set_position;
+    std::function<float()> get_current_x,get_current_y,get_current_z;
     std::function<void(float)> set_angle;
     std::function<void(bool)> ready_arena;
     std::function<bool(std::string_view)> get_object_visible;
@@ -30,7 +33,27 @@ struct GameServices final:IScriptContextServices {
     std::function<void(float,std::string_view)> start_time_script;
     std::function<void()> terminate_time_script;
     std::function<void()> hide_skill_object;
+    std::function<void()> set_full_hp,set_full_mp,set_full_rage,player_take_rest;
+    std::function<std::string()> get_arena_name,get_arena_area;
+    std::function<std::int32_t(std::string_view,std::string_view)> come_from_here;
+    std::function<std::int32_t(std::int32_t,std::int32_t)> get_random_number;
+    std::function<bool(std::uint32_t,std::int32_t)> check_property;
+    std::function<std::int32_t(std::uint32_t)> get_property_count;
+    std::function<std::int32_t()> get_money;
+    std::function<void(std::int32_t,bool)> add_money,pay_money;
+    std::function<void(std::int32_t,std::int32_t)> set_player_level;
+    std::function<std::int32_t(std::int32_t)> get_player_level;
+    std::function<void(std::int32_t,std::uint32_t,bool)> add_player_skill;
+    std::function<void(std::int32_t,std::int32_t,std::int32_t)> add_player_favor;
+    std::function<void(std::int32_t,bool)> set_player_visible;
+    std::function<void(bool)> set_current_player_visible;
+    std::function<void(std::int32_t,Point3)> set_player_position;
     std::function<void(std::int32_t,std::uint32_t)> add_equipment;
+    std::function<void(std::int32_t,std::int32_t)> add_combat_monster;
+    std::function<void(bool,std::int32_t,std::int32_t,std::int32_t)> config_combat_param;
+    std::function<void(std::string_view)> config_combat_bgm,config_combat_camera,config_combat_ground_camera;
+    std::function<void(std::int32_t)> config_combat_vip_monster;
+    std::function<ScriptResponse(const ScriptRequest&)> start_combat;
     std::function<ScriptResponse(const ScriptRequest&)> prepare_camera,run_camera,wait_camera;
     explicit GameServices(std::ostream& output):trace(output) {}
     void OnCall(const ScriptRequest& request) override {
@@ -99,6 +122,113 @@ struct GameServices final:IScriptContextServices {
         if(request.call.system_id==74) {
             if(!request.call.arguments.empty() || !lock_player)throw std::runtime_error("invalid player lock binding");
             lock_player();return {};
+        }
+        if(request.call.system_id==100 || request.call.system_id==101) {
+            if(request.call.arguments.size()!=2)throw std::runtime_error("invalid party membership arguments");
+            const auto& callback=request.call.system_id==100?add_team_member:remove_team_member;
+            if(!callback)throw std::runtime_error("party membership is not bound");
+            callback(std::get<std::int32_t>(request.call.arguments[0]),std::get<bool>(request.call.arguments[1]));return {};
+        }
+        if(request.call.system_id==107) {
+            if(!request.call.arguments.empty() || !get_leader)throw std::runtime_error("invalid leader query binding");
+            return {get_leader(),false};
+        }
+        if(request.call.system_id==191 || request.call.system_id==192 || request.call.system_id==193) {
+            const auto& callback=request.call.system_id==191?get_current_x:request.call.system_id==192?get_current_y:get_current_z;
+            if(!request.call.arguments.empty() || !callback)throw std::runtime_error("invalid current player position query binding");
+            return {callback(),false};
+        }
+        if(request.call.system_id==114 || request.call.system_id==115) {
+            const auto& callback=request.call.system_id==114?set_full_hp:set_full_mp;
+            if(!request.call.arguments.empty() || !callback)throw std::runtime_error("invalid full HP/MP binding");
+            callback();return {};
+        }
+        if(request.call.system_id==194 || request.call.system_id==195) {
+            const auto& callback=request.call.system_id==194?get_arena_name:get_arena_area;
+            if(!request.call.arguments.empty() || !callback)throw std::runtime_error("invalid arena name/area query binding");
+            return {callback(),false};
+        }
+        if(request.call.system_id==92) {
+            if(request.call.arguments.size()!=2 || !add_combat_monster)throw std::runtime_error("invalid add combat monster binding");
+            add_combat_monster(std::get<std::int32_t>(request.call.arguments[0]),std::get<std::int32_t>(request.call.arguments[1]));return {};
+        }
+        if(request.call.system_id==93) {
+            if(request.call.arguments.size()!=4 || !config_combat_param)throw std::runtime_error("invalid combat param binding");
+            config_combat_param(std::get<bool>(request.call.arguments[0]),std::get<std::int32_t>(request.call.arguments[1]),std::get<std::int32_t>(request.call.arguments[2]),std::get<std::int32_t>(request.call.arguments[3]));return {};
+        }
+        if(request.call.system_id==94 || request.call.system_id==95 || request.call.system_id==218) {
+            const auto& callback=request.call.system_id==94?config_combat_bgm:request.call.system_id==95?config_combat_camera:config_combat_ground_camera;
+            if(request.call.arguments.size()!=1 || !callback)throw std::runtime_error("invalid combat text config binding");
+            callback(std::get<std::string>(request.call.arguments[0]));return {};
+        }
+        if(request.call.system_id==230) {
+            if(request.call.arguments.size()!=1 || !config_combat_vip_monster)throw std::runtime_error("invalid combat VIP monster binding");
+            config_combat_vip_monster(std::get<std::int32_t>(request.call.arguments[0]));return {};
+        }
+        if(request.call.system_id==96) {
+            if(request.call.arguments.size()!=1 || !start_combat)throw std::runtime_error("invalid start combat binding");
+            return start_combat(request);
+        }
+        if(request.call.system_id==69) {
+            if(request.call.arguments.size()!=2 || !come_from_here)throw std::runtime_error("invalid arena come-from query binding");
+            return {come_from_here(std::get<std::string>(request.call.arguments[0]),std::get<std::string>(request.call.arguments[1])),false};
+        }
+        if(request.call.system_id==71) {
+            if(request.call.arguments.size()!=2 || !set_player_visible)throw std::runtime_error("invalid player visibility binding");
+            set_player_visible(std::get<std::int32_t>(request.call.arguments[0]),std::get<bool>(request.call.arguments[1]));return {};
+        }
+        if(request.call.system_id==89) {
+            if(request.call.arguments.size()!=2 || !get_random_number)throw std::runtime_error("invalid random number query binding");
+            return {get_random_number(std::get<std::int32_t>(request.call.arguments[0]),std::get<std::int32_t>(request.call.arguments[1])),false};
+        }
+        if(request.call.system_id==108) {
+            if(request.call.arguments.size()!=2 || !set_player_level)throw std::runtime_error("invalid player level update binding");
+            set_player_level(std::get<std::int32_t>(request.call.arguments[0]),std::get<std::int32_t>(request.call.arguments[1]));return {};
+        }
+        if(request.call.system_id==113) {
+            if(request.call.arguments.size()!=1 || !set_current_player_visible)throw std::runtime_error("invalid current player visibility binding");
+            set_current_player_visible(std::get<bool>(request.call.arguments[0]));return {};
+        }
+        if(request.call.system_id==116) {
+            if(request.call.arguments.size()!=1 || !get_player_level)throw std::runtime_error("invalid player level query binding");
+            return {get_player_level(std::get<std::int32_t>(request.call.arguments[0])),false};
+        }
+        if(request.call.system_id==145) {
+            if(request.call.arguments.size()!=3 || !add_player_skill)throw std::runtime_error("invalid player skill acquisition binding");
+            add_player_skill(std::get<std::int32_t>(request.call.arguments[0]),std::bit_cast<std::uint32_t>(std::get<std::int32_t>(request.call.arguments[1])),std::get<bool>(request.call.arguments[2]));return {};
+        }
+        if(request.call.system_id==156) {
+            if(request.call.arguments.size()!=2 || !check_property)throw std::runtime_error("invalid pack property query binding");
+            return {check_property(std::bit_cast<std::uint32_t>(std::get<std::int32_t>(request.call.arguments[0])),std::get<std::int32_t>(request.call.arguments[1])),false};
+        }
+        if(request.call.system_id==178 || request.call.system_id==179) {
+            const auto& callback=request.call.system_id==178?add_money:pay_money;
+            if(request.call.arguments.size()!=2 || !callback)throw std::runtime_error("invalid money transaction binding");
+            callback(std::get<std::int32_t>(request.call.arguments[0]),std::get<bool>(request.call.arguments[1]));return {};
+        }
+        if(request.call.system_id==190) {
+            if(request.call.arguments.size()!=1 || !get_property_count)throw std::runtime_error("invalid property count query binding");
+            return {get_property_count(std::bit_cast<std::uint32_t>(std::get<std::int32_t>(request.call.arguments[0]))),false};
+        }
+        if(request.call.system_id==199) {
+            if(!request.call.arguments.empty() || !player_take_rest)throw std::runtime_error("invalid player rest binding");
+            player_take_rest();return {};
+        }
+        if(request.call.system_id==205) {
+            if(!request.call.arguments.empty() || !get_money)throw std::runtime_error("invalid money query binding");
+            return {get_money(),false};
+        }
+        if(request.call.system_id==219) {
+            if(request.call.arguments.size()!=3 || !add_player_favor)throw std::runtime_error("invalid player favor update binding");
+            add_player_favor(std::get<std::int32_t>(request.call.arguments[0]),std::get<std::int32_t>(request.call.arguments[1]),std::get<std::int32_t>(request.call.arguments[2]));return {};
+        }
+        if(request.call.system_id==235) {
+            if(!request.call.arguments.empty() || !set_full_rage)throw std::runtime_error("invalid full rage binding");
+            set_full_rage();return {};
+        }
+        if(request.call.system_id==249) {
+            if(request.call.arguments.size()!=4 || !set_player_position)throw std::runtime_error("invalid indexed player position binding");
+            set_player_position(std::get<std::int32_t>(request.call.arguments[0]),{std::get<float>(request.call.arguments[1]),std::get<float>(request.call.arguments[2]),std::get<float>(request.call.arguments[3])});return {};
         }
         if(request.call.system_id==70) {
             if(request.call.arguments.size()!=1 || !set_leader)throw std::runtime_error("invalid leader binding");

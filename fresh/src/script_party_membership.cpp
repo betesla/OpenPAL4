@@ -10,7 +10,7 @@ constexpr std::uint32_t kScriptOffset = 0x654u;
 
 struct PartyListOwner {
     IScriptPartyMembershipRuntime& runtime;
-    std::vector<std::uint32_t> players;
+    std::vector<std::uint32_t> players{};
     bool active{true};
 
     ~PartyListOwner() {

@@ -188,8 +188,23 @@ int main(int argc,char** argv) {
         // Arrange a second party member with distinct transform/priorities.
         auto& first=const_cast<PlayerSlot&>(roster.Slots()[0]);
         auto& second=const_cast<PlayerSlot&>(roster.Slots()[1]);
+        roster.SetInTeam(1,true);Check(second.inventory_enabled && first.script_index==0 && second.script_index==1);
+        roster.SetInTeam(1,false);Check(!second.inventory_enabled && first.script_index==0);
+        roster.SetInTeam(-1,true);roster.SetInTeam(4,true);
+        roster.SetInTeam(1,true);Check(second.inventory_enabled);
+        roster.SetHealth(0,0,5);Check(first.progress.hp==0 && first.progress.mp==5 && first.progress.dead);
+        roster.TakeARest();
+        Check(first.progress.hp==210 && first.progress.mp==30 && !first.progress.dead);
+        roster.SetFullRage();
+        Check(first.progress.rage==100 && second.progress.rage==100);
+        roster.SetLevel(0,15);Check(roster.GetLevel(0)==15);
+        roster.AddSkill(0,5101);roster.AddSkill(0,5101);Check(first.skills.size()==1 && first.skills[0]==5101);
+        roster.AddFavor(0,1,25);Check(first.favor[1]==25);
+        roster.AddFavor(0,1,-40);Check(first.favor[1]==0);
+        roster.SetVisible(0,false);Check(!first.visible);
+        roster.SetVisible(0,true);Check(first.visible);
         first.position={7,8,9};first.rotation={1,180,3};first.script_index=2;
-        second.inventory_enabled=true;second.script_index=9;
+        second.script_index=9;
         roster.SetLeader(1,bind);
         Check(bindings==2 && !first.active && second.active && second.world=="Q01" && second.scene=="N01");
         Check(second.position==first.position && second.rotation==first.rotation && second.animation=="C01");
@@ -222,6 +237,7 @@ int main(int argc,char** argv) {
         SceneMovement scene_movement(std::span<const CollisionTriangle>(&plane,1));PlacementServices placement_services;
         PlayerNotifications notifications;PlayerPlacement placement(roster,scene_movement,placement_services,notifications);
         placement.SetCurrent({0,1,0});Check(second.position==Point3{0,1,0});
+        Check(placement.CurrentX()==0 && placement.CurrentY()==1 && placement.CurrentZ()==0);
         Check(placement_services.followed==1 && placement_services.floors==1 && placement_services.grids==1 && placement_services.animations==1);
         std::ostringstream placement_report;placement.WriteReport(placement_report);
         Check(placement_report.str().find("\"completed\":true")!=std::string::npos && placement_report.str().find("\"waits\":1")!=std::string::npos);

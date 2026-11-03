@@ -454,6 +454,16 @@ void BeginNewGame(ChapterHost& session) {
         });
         report_players();
     };
+    session.game_services->get_leader=[&session]() -> std::int32_t {
+        if(!session.players.Prepared())throw std::logic_error("leader query requires prepared players");
+        return static_cast<std::int32_t>(session.players.Leader());
+    };
+    session.game_services->add_team_member=[&session,report_players](std::int32_t index,bool) {
+        session.players.SetInTeam(index,true);report_players();
+    };
+    session.game_services->remove_team_member=[&session,report_players](std::int32_t index,bool) {
+        session.players.SetInTeam(index,false);report_players();
+    };
     session.game_services->set_auto_seek=[&session,report_players](bool enabled) {
         session.players.SetAutoSeek(enabled);report_players();
     };
@@ -496,6 +506,79 @@ void BeginNewGame(ChapterHost& session) {
         };
         try{session.game_placement->SetCurrent(position);}catch(...){report();throw;}
         report();
+    };
+    session.game_services->get_current_x=[&session]() -> float {
+        if(!session.game_placement)throw std::logic_error("player placement requires an active arena");
+        return session.game_placement->CurrentX();
+    };
+    session.game_services->get_current_y=[&session]() -> float {
+        if(!session.game_placement)throw std::logic_error("player placement requires an active arena");
+        return session.game_placement->CurrentY();
+    };
+    session.game_services->get_current_z=[&session]() -> float {
+        if(!session.game_placement)throw std::logic_error("player placement requires an active arena");
+        return session.game_placement->CurrentZ();
+    };
+    session.game_services->set_full_hp=[&session,report_players] {
+        session.players.SetFullHp();report_players();
+    };
+    session.game_services->set_full_mp=[&session,report_players] {
+        session.players.SetFullMp();report_players();
+    };
+    session.game_services->set_full_rage=[&session,report_players] {
+        session.players.SetFullRage();report_players();
+    };
+    session.game_services->player_take_rest=[&session,report_players] {
+        session.players.TakeARest();report_players();
+    };
+    session.game_services->set_player_level=[&session,report_players](std::int32_t index,std::int32_t level) {
+        session.players.SetLevel(index,level);report_players();
+    };
+    session.game_services->get_player_level=[&session](std::int32_t index) -> std::int32_t {
+        return session.players.GetLevel(index);
+    };
+    session.game_services->add_player_skill=[&session,report_players](std::int32_t index,std::uint32_t skill_id,bool) {
+        session.players.AddSkill(index,skill_id);report_players();
+    };
+    session.game_services->add_player_favor=[&session,report_players](std::int32_t first_index,std::int32_t second_index,std::int32_t delta) {
+        session.players.AddFavor(first_index,second_index,delta);report_players();
+    };
+    session.game_services->set_player_visible=[&session,report_players](std::int32_t index,bool visible) {
+        session.players.SetVisible(index,visible);report_players();
+    };
+    session.game_services->set_current_player_visible=[&session,report_players](bool visible) {
+        session.players.SetVisible(static_cast<std::int32_t>(session.players.Leader()),visible);report_players();
+    };
+    session.game_services->set_player_position=[&session,report_players](std::int32_t index,Point3 pos) {
+        session.players.SetPosition(static_cast<std::uint32_t>(index),pos);report_players();
+    };
+    session.game_services->check_property=[&session](std::uint32_t id,std::int32_t required) -> bool {
+        if(!session.inventory)throw std::logic_error("inventory query requires initialized inventory");
+        return required<=0 || session.inventory->Count(id)>=static_cast<std::uint32_t>(required);
+    };
+    session.game_services->get_property_count=[&session](std::uint32_t id) -> std::int32_t {
+        if(!session.inventory)throw std::logic_error("inventory query requires initialized inventory");
+        return static_cast<std::int32_t>(session.inventory->Count(id));
+    };
+    session.game_services->get_money=[&session]() -> std::int32_t {
+        if(!session.inventory)throw std::logic_error("money query requires initialized inventory");
+        return session.inventory->Money();
+    };
+    session.game_services->add_money=[&session](std::int32_t amount,bool) {
+        if(!session.inventory)throw std::logic_error("money transaction requires initialized inventory");
+        session.inventory->AdjustMoney(amount);
+    };
+    session.game_services->pay_money=[&session](std::int32_t amount,bool) {
+        if(!session.inventory)throw std::logic_error("money transaction requires initialized inventory");
+        session.inventory->AdjustMoney(-amount);
+    };
+    session.game_services->get_arena_name=[&session]() -> std::string {
+        if(!session.arena)throw std::logic_error("arena name query requires an active arena");
+        return session.arena->description.scene;
+    };
+    session.game_services->get_arena_area=[&session]() -> std::string {
+        if(!session.arena)throw std::logic_error("arena area query requires an active arena");
+        return session.arena->description.world;
     };
     std::remove((session.directory+"/players-probe.json").c_str());
     std::remove((session.directory+"/player-control-probe.json").c_str());
