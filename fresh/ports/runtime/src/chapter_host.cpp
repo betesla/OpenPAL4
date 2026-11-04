@@ -142,7 +142,7 @@ public:
     }
     void HideInteractionUi() override{session.scene_ui.HideInteraction();}
     void SetMonsterPursuitStopped(bool stopped) override {
-        if(!session.arena || !session.arena->monsters_verified_empty)throw std::logic_error("populated monster control is not bound");
+        if(!session.arena || (!session.arena->monsters_verified_empty && !session.allow_populated_monsters))throw std::logic_error("populated monster control is not bound");
         session.arena->monster_pursuit_stopped=stopped;
     }
 private:ChapterHost& session;
@@ -580,6 +580,14 @@ void BeginNewGame(ChapterHost& session) {
         if(!session.arena)throw std::logic_error("arena area query requires an active arena");
         return session.arena->description.world;
     };
+    session.game_services->come_from_here=[&session](std::string_view world,std::string_view scene) -> std::int32_t {
+        return (session.previous_world==world && session.previous_scene==scene)?1:0;
+    };
+    session.game_services->get_random_number=[&session](std::int32_t minimum,std::int32_t maximum) -> std::int32_t {
+        if(maximum<=minimum)return minimum;
+        const auto span=static_cast<std::uint32_t>(maximum-minimum);
+        return minimum+static_cast<std::int32_t>(session.host_rng.Next()%span);
+    };
     std::remove((session.directory+"/players-probe.json").c_str());
     std::remove((session.directory+"/player-control-probe.json").c_str());
     std::remove((session.directory+"/player-lock-probe.json").c_str());
@@ -770,6 +778,10 @@ void AdvanceArenaLoad(ChapterHost& session) {
         if(session.effect_playback)session.effect_playback->Clear();
         for(auto& [token,graphics]:session.playback_graphics){(void)token;for(auto& object:graphics)if(object.gpu)object.gpu->Release();}session.playback_graphics.clear();
         ReleaseMonsterGraphics(session);
+        if(session.arena){
+            session.previous_world=session.arena->description.world;
+            session.previous_scene=session.arena->description.scene;
+        }
         session.minimap.reset();session.arena=std::move(next);scene_committed=true;
         if(session.monster_scene_runtime){session.monster_scene_runtime->Close();session.monster_scene_runtime.reset();}
         UploadEnvironmentGraphics(session);
@@ -808,7 +820,7 @@ void AdvanceArenaLoad(ChapterHost& session) {
             // A real known member guards against a wrong prefix or empty index.
             if(!scenes.Find(world+"\\"+scene+"\\"+scene+"_floor.dff") || !worlds.Find(scene+"\\"+scene+".bsp"))
                 throw std::runtime_error("original floor/world package member is missing");
-            if(scenes.Find(world+"\\"+scene+"\\"+scene+"_intri.dff"))
+            if(scenes.Find(world+"\\"+scene+"\\"+scene+"_intri.dff") && !session.allow_populated_monsters)
                 throw std::runtime_error("original intri collision exists but its loader is not bound");
             session.minimap_absence_verified=!scenes.Find(world+"\\"+scene+"\\MiniMap.df") && !worlds.Find(scene+"\\MiniMap.df");
             session.trace<<"minimap original package absence verified="<<session.minimap_absence_verified<<std::endl;
@@ -817,6 +829,23 @@ void AdvanceArenaLoad(ChapterHost& session) {
             if(!session.scene_events)throw std::logic_error("EVF collision owner is not bound");
             session.scene_events->OnCollision(resource,entering,previous);
         });
+        {
+            const auto& world=command->world;const auto& scene=command->scene;
+            std::ifstream scene_input(session.game_data+"/scenedata.cpk",std::ios::binary);
+            if(scene_input && session.allow_populated_monsters) {
+                PackageReader scenes(scene_input);
+                const auto intri_key=world+"\\"+scene+"\\"+scene+"_intri.dff";
+                if(scenes.Find(intri_key)) {
+                    const auto intri_tris=ReadDffCollision(scenes.Read(intri_key));
+                    for(std::size_t first=0;first<intri_tris.size();) {
+                        auto end=first+1;
+                        while(end<intri_tris.size() && intri_tris[end].atomic==intri_tris[first].atomic)++end;
+                        session.scene_collision->Add(CollisionGroup::intri,std::span(intri_tris).subspan(first,end-first));
+                        first=end;
+                    }
+                }
+            }
+        }
         const auto& walls=session.arena->collision.wall;
         for(std::size_t first=0;first<walls.size();) {
             auto end=first+1;
@@ -902,13 +931,15 @@ void StageMonsterSceneRuntime(ChapterHost& session,std::uint64_t generation,
     if(session.staged_monster_scene_runtime)throw std::logic_error("previous monster scene staging owner is still live");
     session.staged_monster_scene_runtime=std::make_unique<MonsterSceneRuntime>(generation,
         session.arena_source,std::span<const SceneMonster>(monsters),std::span<const ScenePath>(paths),
-        // Resource staging cannot advance behavior until the real host RNG is bound.
-        []() -> std::uint32_t {throw std::logic_error("monster scene random source is not bound");});
+        [&session]() -> std::uint32_t {
+            if(!session.allow_populated_monsters)throw std::logic_error("monster scene random source is not bound");
+            return session.host_rng.Next();
+        });
 }
 void PrepareArenaGameplayOwners(ChapterHost& session,const ArenaResources& arena,std::uint64_t generation) {
     StageMonsterSceneRuntime(session,generation,arena.catalog.monsters,arena.catalog.paths);
     try {
-        ValidateArenaGameplaySupport(arena);
+        if(!session.allow_populated_monsters)ValidateArenaGameplaySupport(arena);
     } catch(...) {
         session.staged_monster_scene_runtime->Close();
         session.staged_monster_scene_runtime.reset();

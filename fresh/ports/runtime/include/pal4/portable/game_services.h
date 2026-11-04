@@ -55,6 +55,7 @@ struct GameServices final:IScriptContextServices {
     std::function<void(std::int32_t)> config_combat_vip_monster;
     std::function<ScriptResponse(const ScriptRequest&)> start_combat;
     std::function<ScriptResponse(const ScriptRequest&)> prepare_camera,run_camera,wait_camera;
+    std::function<ScriptResponse(const ScriptRequest&)> fallback;
     explicit GameServices(std::ostream& output):trace(output) {}
     void OnCall(const ScriptRequest& request) override {
         ++calls;last_service=static_cast<unsigned>(request.call.system_id);
@@ -247,6 +248,7 @@ struct GameServices final:IScriptContextServices {
             prepare_players();
             return {};
         }
+        if(fallback)return fallback(request);
         throw std::runtime_error("unbound game service "+std::to_string(request.call.system_id));
     }
 };
