@@ -18,6 +18,9 @@ public:
     PlayerPlacement(const PlayerPlacement&)=delete;
     PlayerPlacement& operator=(const PlayerPlacement&)=delete;
     void SetCurrent(Point3 position);
+    float CurrentX() const;
+    float CurrentY() const;
+    float CurrentZ() const;
     void ProcessWaitHandlers();
     void WriteReport(std::ostream& output) const;
 private:struct Impl;std::unique_ptr<Impl> impl_;

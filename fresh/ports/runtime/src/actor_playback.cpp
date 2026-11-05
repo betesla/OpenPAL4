@@ -156,7 +156,7 @@ struct ActorPlayback::Impl final:pal4::IGameObjectInterpolatorRuntime,pal4::IGam
     void AttachSkinAtomics(unsigned,unsigned) override{Missing();}
     int AnimationCount(pal4::GameObjectEmbeddedAnimationState& current) override{Check(&current==&state,"invalid clip table");return static_cast<int>(actor.clips.size());}
     std::string_view ActionName(pal4::GameObjectEmbeddedAnimationState&,int index) override{return actor.clips.at(static_cast<std::size_t>(index)).name;}
-    int CompareActionNames(std::string_view a,std::string_view b) override{return a==b?0:1;}
+    int CompareActionNames(std::string_view a,std::string_view b) override{return Same(a,b)?0:1;}
     unsigned RecordAnimation(unsigned record) override{return static_cast<unsigned>(RecordIndex(record))+1;}
     void SetCurrentAnimation(unsigned interpolator,unsigned animation) override {
         Check(interpolator>=3 && interpolator<=5 && animation>0 && animation<=actor.clips.size(),"invalid animation selection");
@@ -197,18 +197,18 @@ bool ActorPlayback::UnbindAnimationImage(std::uint64_t binding){
 }
 bool ActorPlayback::OwnsAnimationImage(std::uint64_t binding) const{return binding && impl_->binding==binding && !impl_->bound_image.empty();}
 bool ActorPlayback::Select(std::string_view action) {
-    return impl_->Run([&]{for(std::size_t i=0;i<impl_->actor.clips.size();++i)if(impl_->actor.clips[i].name==action){impl_->LoadClip(i);impl_->LoadMessages(i);return pal4::GameObjectAnimationSwitch::SetCurrentAnimation(impl_->state,action,*impl_);}return false;});
+    return impl_->Run([&]{for(std::size_t i=0;i<impl_->actor.clips.size();++i)if(Same(impl_->actor.clips[i].name,action)){impl_->LoadClip(i);impl_->LoadMessages(i);return pal4::GameObjectAnimationSwitch::SetCurrentAnimation(impl_->state,impl_->actor.clips[i].name,*impl_);}return false;});
 }
 bool ActorPlayback::SelectBlended(std::string_view action,float seconds) {
     return impl_->Run([&]{
         Check(std::isfinite(seconds) && seconds>0,"invalid animation blend duration");
         Check(impl_->clip>=0,"blend requires a current animation");
-        for(std::size_t i=0;i<impl_->actor.clips.size();++i)if(impl_->actor.clips[i].name==action){impl_->LoadClip(i);impl_->LoadMessages(i);return pal4::GameObjectAnimationSwitch::SetCurrentAnimationBlended(impl_->state,action,seconds,*impl_);}
+        for(std::size_t i=0;i<impl_->actor.clips.size();++i)if(Same(impl_->actor.clips[i].name,action)){impl_->LoadClip(i);impl_->LoadMessages(i);return pal4::GameObjectAnimationSwitch::SetCurrentAnimationBlended(impl_->state,impl_->actor.clips[i].name,seconds,*impl_);}
         return false;
     });
 }
 void ActorPlayback::Advance(float elapsed) {
-    impl_->Run([&]{Check(std::isfinite(elapsed) && elapsed>=0,"invalid animation elapsed");Check(pal4::GameObjectEmbeddedAnimation::UpdateInterpolator(impl_->state,elapsed,*impl_),"animation interpolator cannot advance");++impl_->frames;});
+    impl_->Run([&]{Check(std::isfinite(elapsed) && elapsed>=0,"invalid animation elapsed");if(impl_->clip>=0)Check(pal4::GameObjectEmbeddedAnimation::UpdateInterpolator(impl_->state,elapsed,*impl_),"animation interpolator cannot advance");++impl_->frames;});
 }
 bool ActorPlayback::ProcessRenderAnimation(std::uint32_t camera) {
     return impl_->Run([&]{return pal4::GameObjectEmbeddedAnimation::ProcessAnimation(impl_->state,camera,*impl_);});

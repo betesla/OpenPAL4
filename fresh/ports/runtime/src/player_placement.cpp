@@ -15,6 +15,18 @@ struct PlayerPlacement::Impl final:pal4::IScriptPlayerPositionRuntime {
     Impl(PlayerRoster& p,SceneMovement& m,IPlayerPlacementServices& s,PlayerNotifications& n):players(p),movement(m),services(s),notifications(n){}
     std::uint32_t CurrentHandle() const{return 0x10000+players.Leader()*0xb14;}
     void RequireCurrent(std::uint32_t handle) const{if(handle!=CurrentHandle())throw std::logic_error("invalid placement player handle");}
+    float CurrentX() const {
+        if(!players.Prepared())throw std::logic_error("placement player manager is unavailable");
+        return players.Slots().at(players.Leader()).position[0];
+    }
+    float CurrentY() override {
+        if(!players.Prepared())throw std::logic_error("placement player manager is unavailable");
+        return players.Slots().at(players.Leader()).position[1];
+    }
+    float CurrentZ() override {
+        if(!players.Prepared())throw std::logic_error("placement player manager is unavailable");
+        return players.Slots().at(players.Leader()).position[2];
+    }
     std::uint32_t PlayerManager() override{return 0x8000;}
     std::uint32_t CurrentPlayer(std::uint32_t manager) override {
         if(manager!=0x8000 || !players.Prepared())throw std::logic_error("placement player manager is unavailable");
@@ -75,6 +87,9 @@ void PlayerPlacement::SetCurrent(Point3 position) {
     pal4::ScriptPlayerPosition script(*impl_);(void)script.SetCurrent({position[0],position[1],position[2]});
     impl_->completed=true;impl_->phase="submitted";
 }
+float PlayerPlacement::CurrentX() const { return impl_->CurrentX(); }
+float PlayerPlacement::CurrentY() const { return impl_->CurrentY(); }
+float PlayerPlacement::CurrentZ() const { return impl_->CurrentZ(); }
 void PlayerPlacement::ProcessWaitHandlers(){impl_->notifications.Process();}
 void PlayerPlacement::WriteReport(std::ostream& output) const {
     const auto& s=*impl_;const auto& player=s.players.Slots()[s.players.Leader()];const auto hit=s.movement.LastHit();

@@ -29,6 +29,7 @@
  */
 #include "pal4/portable/csb_execution.h"
 #include <bit>
+#include <cmath>
 #include <sstream>
 #include <stdexcept>
 
@@ -48,13 +49,14 @@ std::string Ascii(std::string_view text) {
 }
 }
 struct CsbExecution::Impl {
-    struct Reference {bool global{};std::size_t index{};};
+    struct Reference {bool global{};std::size_t index{};bool module_global{};};
     using Text=std::shared_ptr<std::string>;
     using Cell=std::variant<std::uint32_t,Reference,Text>;
     std::shared_ptr<const CsbModule> module;
     const CsbFunction* function{};
     ScriptGlobals& globals;IScriptServices& services;CsbTextDecoder decoder;
     std::vector<Cell> stack;
+    std::vector<Cell> module_globals;
     std::size_t sp{},fp{},pc{};
     struct Frame {const CsbFunction* function;std::size_t pc,fp,sp;};
     std::vector<Frame> frames;
@@ -63,12 +65,21 @@ struct CsbExecution::Impl {
     ScriptState state{ScriptState::prepared};ScriptPause pause{};std::string error;
     bool executing{},original_steps{},repeat_steps{};
     Impl(std::shared_ptr<const CsbModule> m,ScriptGlobals& g,IScriptServices& s,CsbTextDecoder d)
-        :module(std::move(m)),globals(g),services(s),decoder(d?std::move(d):Ascii),stack(65536),sp(stack.size()),fp(sp) {}
+        :module(std::move(m)),globals(g),services(s),decoder(d?std::move(d):Ascii),stack(65536),module_globals(65536),sp(stack.size()),fp(sp) {}
     Cell& Top(std::size_t offset=0) {
         if(offset>=stack.size()-sp)throw std::runtime_error("legacy operand stack underflow");return stack[sp+offset];
     }
     void Push(Cell value) {if(!sp)throw std::runtime_error("legacy stack overflow");stack[--sp]=std::move(value);}
     Cell Pop(){auto value=Top();stack[sp++]=std::uint32_t{};return value;}
+    void PushDouble(double value) {
+        const auto bits=std::bit_cast<std::uint64_t>(value);
+        Push(static_cast<std::uint32_t>(bits>>32));
+        Push(static_cast<std::uint32_t>(bits));
+    }
+    double PopDouble() {
+        const auto lo=std::uint64_t(Number(Pop())),hi=std::uint64_t(Number(Pop()));
+        return std::bit_cast<double>(lo|(hi<<32));
+    }
     static std::uint32_t Number(const Cell& value) {
         if(!std::holds_alternative<std::uint32_t>(value))throw std::runtime_error("legacy numeric slot has a reference");
         return std::get<std::uint32_t>(value);
@@ -79,10 +90,12 @@ struct CsbExecution::Impl {
         return stack[static_cast<std::size_t>(index)];
     }
     Cell Read(const Reference& r) {
+        if(r.module_global)return module_globals.at(r.index);
         if(r.global)return static_cast<std::uint32_t>(globals.at(r.index));return stack.at(r.index);
     }
     void Write(const Reference& r,Cell value) {
-        if(r.global)globals.at(r.index)=std::bit_cast<std::int32_t>(Number(value));else stack.at(r.index)=std::move(value);
+        if(r.module_global)module_globals.at(r.index)=std::move(value);
+        else if(r.global)globals.at(r.index)=std::bit_cast<std::int32_t>(Number(value));else stack.at(r.index)=std::move(value);
     }
     void CleanupFailedState() noexcept {
         for(auto& cell:stack)cell=std::uint32_t{};
@@ -138,8 +151,18 @@ struct CsbExecution::Impl {
         std::istringstream arguments(std::string(declaration.substr(open+1,close-open-1)));std::string parameter;
         while(std::getline(arguments,parameter,',')) {
             std::istringstream words(parameter);std::string type;words>>type;if(type.empty())continue;
+            if(type.ends_with('&'))type.pop_back();
             if(parameter.find("out")!=std::string::npos)throw std::runtime_error("legacy writable argument requires typed service");
-            if(type=="string")call.arguments.emplace_back(*String(Pop()));
+            if(type=="string") {
+                if(id==240 && !call.arguments.empty()) {
+                    const bool two_string_args=pc>=4 && function->instructions[pc-4].opcode==118;
+                    if(!two_string_args) {
+                        call.arguments.emplace_back(std::string{});
+                        continue;
+                    }
+                }
+                call.arguments.emplace_back(*String(Pop()));
+            }
             else if(type=="int")call.arguments.emplace_back(std::bit_cast<std::int32_t>(Number(Pop())));
             else if(type=="bool")call.arguments.emplace_back((Number(Pop())&255)!=0);
             else if(type=="float")call.arguments.emplace_back(std::bit_cast<float>(Number(Pop())));
@@ -199,19 +222,63 @@ struct CsbExecution::Impl {
             const bool take=i.opcode==15?value==0:i.opcode==16?value!=0:i.opcode==91?value<0:i.opcode==92?value>=0:i.opcode==93?value>0:value<=0;
             if(take)Jump(i);break;
         }
+        case 17:Top()=Number(Top())==0?1u:0u;break;
+        case 18:Top()=Number(Top())!=0?1u:0u;break;
+        case 19:Top()=std::bit_cast<std::int32_t>(Number(Top()))<0?1u:0u;break;
+        case 20:Top()=std::bit_cast<std::int32_t>(Number(Top()))>=0?1u:0u;break;
+        case 21:Top()=std::bit_cast<std::int32_t>(Number(Top()))>0?1u:0u;break;
+        case 22:Top()=std::bit_cast<std::int32_t>(Number(Top()))<=0?1u:0u;break;
+        case 23: {const auto r=std::bit_cast<std::int32_t>(Number(Pop())),l=std::bit_cast<std::int32_t>(Number(Top()));Top()=static_cast<std::uint32_t>(l+r);break;}
+        case 24: {const auto r=std::bit_cast<std::int32_t>(Number(Pop())),l=std::bit_cast<std::int32_t>(Number(Top()));Top()=static_cast<std::uint32_t>(l-r);break;}
+        case 25: {const auto r=std::bit_cast<std::int32_t>(Number(Pop())),l=std::bit_cast<std::int32_t>(Number(Top()));Top()=static_cast<std::uint32_t>(l*r);break;}
+        case 26: {const auto r=std::bit_cast<std::int32_t>(Number(Pop())),l=std::bit_cast<std::int32_t>(Number(Top()));if(!r)throw std::runtime_error("legacy divide by zero");Top()=static_cast<std::uint32_t>(l/r);break;}
+        case 27: {const auto r=std::bit_cast<std::int32_t>(Number(Pop())),l=std::bit_cast<std::int32_t>(Number(Top()));if(!r)throw std::runtime_error("legacy divide by zero");Top()=static_cast<std::uint32_t>(l%r);break;}
+        case 28:Top()=static_cast<std::uint32_t>(-std::bit_cast<std::int32_t>(Number(Top())));break;
+        case 29: {const auto r=std::bit_cast<std::int32_t>(Number(Pop())),l=std::bit_cast<std::int32_t>(Number(Top()));Top()=static_cast<std::uint32_t>(l<r?-1:l>r?1:0);break;}
         case 30:case 31: {
             const auto reference=Ref(Top());
             const auto value=Number(Read(reference));
             Write(reference,value+(i.opcode==30?1u:std::uint32_t(-1)));
             break;
         }
+        case 32:Top()=std::bit_cast<std::uint32_t>(static_cast<float>(std::bit_cast<std::int32_t>(Number(Top()))));break;
+        case 33: {const auto r=std::bit_cast<float>(Number(Pop())),l=std::bit_cast<float>(Number(Top()));Top()=std::bit_cast<std::uint32_t>(l+r);break;}
+        case 34: {const auto r=std::bit_cast<float>(Number(Pop())),l=std::bit_cast<float>(Number(Top()));Top()=std::bit_cast<std::uint32_t>(l-r);break;}
+        case 35: {const auto r=std::bit_cast<float>(Number(Pop())),l=std::bit_cast<float>(Number(Top()));Top()=std::bit_cast<std::uint32_t>(l*r);break;}
+        case 36: {const auto r=std::bit_cast<float>(Number(Pop())),l=std::bit_cast<float>(Number(Top()));Top()=std::bit_cast<std::uint32_t>(l/r);break;}
+        case 38:Top()=std::bit_cast<std::uint32_t>(-std::bit_cast<float>(Number(Top())));break;
+        case 39: {const auto r=std::bit_cast<float>(Number(Pop())),l=std::bit_cast<float>(Number(Top()));Top()=static_cast<std::uint32_t>(l<r?-1:l>r?1:0);break;}
+        case 42:Top()=static_cast<std::uint32_t>(static_cast<std::int32_t>(std::bit_cast<float>(Number(Top()))));break;
+        case 43:Top()=~Number(Top());break;
+        case 44: {const auto r=Number(Pop()),l=Number(Top());Top()=l&r;break;}
+        case 45: {const auto r=Number(Pop()),l=Number(Top());Top()=l|r;break;}
+        case 46: {const auto r=Number(Pop()),l=Number(Top());Top()=l^r;break;}
+        case 47: {const auto r=Number(Pop()),l=Number(Top());Top()=l<<r;break;}
+        case 48: {const auto r=Number(Pop()),l=Number(Top());Top()=l>>r;break;}
+        case 49: {const auto r=Number(Pop());const auto l=std::bit_cast<std::int32_t>(Number(Top()));Top()=static_cast<std::uint32_t>(l>>r);break;}
+        case 50:Top()=std::bit_cast<std::uint32_t>(static_cast<float>(Number(Top())));break;
+        case 51:Top()=static_cast<std::uint32_t>(std::bit_cast<float>(Number(Top())));break;
+        case 52: {const auto r=Number(Pop()),l=Number(Top());Top()=static_cast<std::uint32_t>(l<r?-1:l>r?1:0);break;}
         case 53:Top()=static_cast<std::uint32_t>(static_cast<std::int32_t>(std::bit_cast<std::int8_t>(static_cast<std::uint8_t>(Number(Top())))));break;
         case 54:Top()=static_cast<std::uint32_t>(static_cast<std::int32_t>(std::bit_cast<std::int16_t>(static_cast<std::uint16_t>(Number(Top())))));break;
         case 55:Top()=Number(Top())&0xffu;break;
         case 56:Top()=Number(Top())&0xffffu;break;
         case 63:Push(std::uint32_t{});break;
+        case 65:if(s<0)Push(Reference{true,static_cast<std::size_t>(-std::int64_t(s)-1),false});else Push(Reference{false,static_cast<std::size_t>(u&65535),true});break;
         // AngelScript 2.2 BC_SET8: reserve two 32-bit slots, low word at SP.
         case 66:Push(static_cast<std::uint32_t>(i.operand>>32));Push(u);break;
+        case 72: {const auto r=PopDouble(),l=PopDouble();PushDouble(l+r);break;}
+        case 73: {const auto r=PopDouble(),l=PopDouble();PushDouble(l-r);break;}
+        case 74: {const auto r=PopDouble(),l=PopDouble();PushDouble(l*r);break;}
+        case 75: {const auto r=PopDouble(),l=PopDouble();PushDouble(l/r);break;}
+        case 76: {const auto r=PopDouble(),l=PopDouble();PushDouble(std::fmod(l,r));break;}
+        case 77:PushDouble(-PopDouble());break;
+        case 78: {const auto r=PopDouble(),l=PopDouble();Push(static_cast<std::uint32_t>(l<r?-1:l>r?1:0));break;}
+        case 81:Push(std::bit_cast<std::uint32_t>(static_cast<float>(PopDouble())));break;
+        case 82:PushDouble(static_cast<double>(std::bit_cast<std::int32_t>(Number(Pop()))));break;
+        case 83:Push(static_cast<std::uint32_t>(static_cast<std::int32_t>(PopDouble())));break;
+        case 84:PushDouble(static_cast<double>(std::bit_cast<float>(Number(Pop()))));break;
+        case 85:pc+=Number(Pop());break;
         case 86:return_bits=Number(Pop());break;
         case 88:Push(static_cast<std::uint32_t>(return_bits));break;
         case 109: {
@@ -248,8 +315,15 @@ struct CsbExecution::Impl {
             if(s>=0 || s==(-2147483647-1))throw std::runtime_error("invalid legacy system function ID");
             if(Call(-s)){state=ScriptState::suspended;pause=ScriptPause::service;}else StepBoundary();
             break;
-        case 99:if(s>=0)throw std::runtime_error("legacy module globals not yet supported");Push(static_cast<std::uint32_t>(globals.at(static_cast<std::size_t>(-std::int64_t(s)-1))));break;
-        case 100:if(s>=0)throw std::runtime_error("legacy module globals not yet supported");globals.at(static_cast<std::size_t>(-std::int64_t(s)-1))=std::bit_cast<std::int32_t>(Number(Pop()));break;
+        case 99:if(s<0)Push(static_cast<std::uint32_t>(globals.at(static_cast<std::size_t>(-std::int64_t(s)-1))));else Push(module_globals.at(static_cast<std::size_t>(u&65535)));break;
+        case 100:if(s<0)globals.at(static_cast<std::size_t>(-std::int64_t(s)-1))=std::bit_cast<std::int32_t>(Number(Pop()));else module_globals.at(static_cast<std::size_t>(u&65535))=Pop();break;
+        case 101:Top()=static_cast<std::uint32_t>(std::bit_cast<std::int32_t>(Number(Top()))+s);break;
+        case 102:Top()=static_cast<std::uint32_t>(std::bit_cast<std::int32_t>(Number(Top()))-s);break;
+        case 103: {const auto l=std::bit_cast<float>(Number(Top())),r=std::bit_cast<float>(u);Top()=static_cast<std::uint32_t>(l<r?-1:l>r?1:0);break;}
+        case 104:Top()=std::bit_cast<std::uint32_t>(std::bit_cast<float>(Number(Top()))+std::bit_cast<float>(u));break;
+        case 105:Top()=std::bit_cast<std::uint32_t>(std::bit_cast<float>(Number(Top()))-std::bit_cast<float>(u));break;
+        case 106:Top()=static_cast<std::uint32_t>(std::bit_cast<std::int32_t>(Number(Top()))*s);break;
+        case 107:Top()=std::bit_cast<std::uint32_t>(std::bit_cast<float>(Number(Top()))*std::bit_cast<float>(u));break;
         case 108:
             // ExecuteStep(0) consumes the cue before yielding. The original
             // executor decides whether to repeat from mode at frame entry.
@@ -269,12 +343,18 @@ CsbExecution::CsbExecution(std::shared_ptr<const CsbModule> module,std::string_v
     self.function=self.module->Find(entry);
     if(!self.function || !self.function->parameters.empty() || self.function->result.token!=69)
         throw std::invalid_argument("legacy void entry without parameters required");
-    if(!self.module->structures.empty() || self.module->global_slots || !self.module->globals.empty() || !self.module->imports.empty())
+    if(!self.module->structures.empty() || !self.module->imports.empty())
         throw std::runtime_error("legacy module types/globals/imports require initialization support");
-    for(const auto* function:{&self.module->initialize,&self.module->finalize})
-        for(const auto& instruction:function->instructions)
-            if((instruction.opcode!=13 || instruction.operand!=0) && instruction.opcode!=108)
-                throw std::runtime_error("legacy module initialization/finalization requires execution support");
+    if(!self.module->initialize.instructions.empty()){
+        const auto* saved_fn=self.function;
+        self.function=&self.module->initialize;self.pc=0;
+        while(self.pc<self.function->instructions.size() && self.state==ScriptState::prepared){
+            const auto& ins=self.function->instructions[self.pc++];
+            if(ins.opcode==13)break;
+            self.Instruction(ins);
+        }
+        self.function=saved_fn;self.pc=0;self.state=ScriptState::prepared;self.pause=ScriptPause::none;
+    }
 }
 CsbExecution::~CsbExecution()=default;
 ScriptState CsbExecution::Execute(std::uint32_t budget,ScriptRunMode mode) {

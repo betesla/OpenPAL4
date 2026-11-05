@@ -36,8 +36,11 @@ struct PlayerSlot {
     std::array<float,3> position{}, rotation{};
     std::array<std::uint32_t,6> equipment{};
     std::array<std::optional<std::uint64_t>,2> named_weapon_effects{};
+    std::array<std::int32_t,4> favor{};
+    std::vector<std::uint32_t> skills{};
     std::uint32_t script_index{}; // 原脚本组件的排序字段；换队长时交换。
     bool auto_seek{true};
+    bool visible{true};
     bool active{}, inventory_enabled{};
 };
 class PlayerRoster {
@@ -49,6 +52,18 @@ public:
     // IDA 441730: same index returns before any scene work. The callback
     // binds controller/GPU resources after arena membership has transferred.
     void SetLeader(std::int32_t index,const std::function<void(std::uint32_t)>& bind_actor);
+    // IDA 5D4950/5D4B60: giPlayerInTeam/giPlayerOutTeam membership and order.
+    void SetInTeam(std::int32_t index,bool in_team);
+    void SetFullHp();
+    void SetFullMp();
+    void SetFullRage();
+    void TakeARest();
+    void SetHealth(std::uint32_t index,std::int32_t hp,std::int32_t mp);
+    void SetLevel(std::int32_t index,std::int32_t level);
+    std::int32_t GetLevel(std::int32_t index) const;
+    void AddSkill(std::int32_t index,std::uint32_t skill_id);
+    void AddFavor(std::int32_t first_index,std::int32_t second_index,std::int32_t delta);
+    void SetVisible(std::int32_t index,bool visible);
     void SetAutoSeek(bool enabled);
     void SelectAction(std::uint32_t index,std::string_view action);
     void SetPosition(std::uint32_t index,std::array<float,3> position);

@@ -96,21 +96,22 @@ void UploadObjectGraphics(ChapterHost& session) {
     }
 }
 void SelectGameAnimation(ChapterHost& session,std::uint32_t index,std::string_view action) {
-    if(session.controller.State().actor!=index)throw std::logic_error("animation controller is not bound to player");
-    const auto& actor=*session.players.Slots()[index].actor;bool found=false;
-    for(std::size_t i=0;i<actor.clips.size();++i)if(actor.clips[i].name==action){session.clip=static_cast<int>(i);found=true;}
-    if(!found)throw std::logic_error("selected player animation is missing");
+    if(session.controller.State().actor!=index || index>=session.players.Slots().size() || !session.players.Slots()[index].actor)return;
+    const auto& actor=*session.players.Slots()[index].actor;
+    for(std::size_t i=0;i<actor.clips.size();++i)if(actor.clips[i].name==action){session.clip=static_cast<int>(i);break;}
     session.animation_start=Clock::now();
 }
 class PlacementServices final:public IPlayerPlacementServices {
 public:
     explicit PlacementServices(ChapterHost& owner):session(owner){}
     void FollowPlayer(std::uint32_t index) override {
-        if(!session.camera_follow || session.controller.State().actor!=index)throw std::logic_error("placement camera follow owner is unavailable");
+        if(!session.camera_follow)throw std::logic_error("placement camera follow owner is unavailable");
+        if(session.controller.State().actor!=index)return;
         session.camera_follow->FollowPlayer();
     }
     void UpdateFloorAttributes(unsigned child,const FloorHit& hit) override {
-        if(child || !session.arena || !session.floor_attributes)throw std::logic_error("placement floor owner is unavailable");
+        if(!session.arena || !session.floor_attributes)throw std::logic_error("placement floor owner is unavailable");
+        if(child!=0)return;
         session.floor_attributes->Update(session.arena->collision.floor.at(hit.triangle));
     }
     void UpdateGrid(Point3 position,Point3 rotation) override {
@@ -133,7 +134,7 @@ public:
         session.requested_action.clear();
 #if PAL4_MODERN_GAMEPAD
         if(session.modern_movement_active && session.controller.Initialized()){
-            session.controller.SetMovementMode(session.controller.State().input.mode);
+            session.controller.SetMovementMode(1);
             session.controller.SetAnalogMovementResult(false);
         }
         session.modern_movement_active=false;
@@ -142,7 +143,7 @@ public:
     }
     void HideInteractionUi() override{session.scene_ui.HideInteraction();}
     void SetMonsterPursuitStopped(bool stopped) override {
-        if(!session.arena || !session.arena->monsters_verified_empty)throw std::logic_error("populated monster control is not bound");
+        if(!session.arena || (!session.arena->monsters_verified_empty && !session.allow_populated_monsters))throw std::logic_error("populated monster control is not bound");
         session.arena->monster_pursuit_stopped=stopped;
     }
 private:ChapterHost& session;
@@ -374,7 +375,7 @@ void BeginNewGame(ChapterHost& session) {
         if(!session.player_walks)throw std::logic_error("player walk requires a loaded scene");
         const auto& a=request.call.arguments;
         const auto result=request.call.system_id==267?session.player_walks->End(request.token,std::get<std::int32_t>(a[0])):
-            session.player_walks->Start(request.token,std::get<std::int32_t>(a[0]),{std::get<float>(a[1]),std::get<float>(a[2]),std::get<float>(a[3])},std::get<bool>(a[4]));
+            session.player_walks->Start(request.token,std::get<std::int32_t>(a[0]),{std::get<float>(a[1]),std::get<float>(a[2]),std::get<float>(a[3])},std::get<bool>(a[4]),request.call.system_id==258);
         std::ofstream report(session.directory+"/player-walk-probe.json",std::ios::trunc);session.player_walks->WriteReport(report);return result;
     };
     session.game_services->player_turn=[&session](const ScriptRequest& request){const auto& a=request.call.arguments;return session.player_turns->Start(request.token,std::get<std::int32_t>(a[0]),std::get<float>(a[1]),std::get<bool>(a[2]));};
@@ -454,6 +455,16 @@ void BeginNewGame(ChapterHost& session) {
         });
         report_players();
     };
+    session.game_services->get_leader=[&session]() -> std::int32_t {
+        if(!session.players.Prepared())throw std::logic_error("leader query requires prepared players");
+        return static_cast<std::int32_t>(session.players.Leader());
+    };
+    session.game_services->add_team_member=[&session,report_players](std::int32_t index,bool) {
+        session.players.SetInTeam(index,true);report_players();
+    };
+    session.game_services->remove_team_member=[&session,report_players](std::int32_t index,bool) {
+        session.players.SetInTeam(index,false);report_players();
+    };
     session.game_services->set_auto_seek=[&session,report_players](bool enabled) {
         session.players.SetAutoSeek(enabled);report_players();
     };
@@ -496,6 +507,87 @@ void BeginNewGame(ChapterHost& session) {
         };
         try{session.game_placement->SetCurrent(position);}catch(...){report();throw;}
         report();
+    };
+    session.game_services->get_current_x=[&session]() -> float {
+        if(!session.game_placement)throw std::logic_error("player placement requires an active arena");
+        return session.game_placement->CurrentX();
+    };
+    session.game_services->get_current_y=[&session]() -> float {
+        if(!session.game_placement)throw std::logic_error("player placement requires an active arena");
+        return session.game_placement->CurrentY();
+    };
+    session.game_services->get_current_z=[&session]() -> float {
+        if(!session.game_placement)throw std::logic_error("player placement requires an active arena");
+        return session.game_placement->CurrentZ();
+    };
+    session.game_services->set_full_hp=[&session,report_players] {
+        session.players.SetFullHp();report_players();
+    };
+    session.game_services->set_full_mp=[&session,report_players] {
+        session.players.SetFullMp();report_players();
+    };
+    session.game_services->set_full_rage=[&session,report_players] {
+        session.players.SetFullRage();report_players();
+    };
+    session.game_services->player_take_rest=[&session,report_players] {
+        session.players.TakeARest();report_players();
+    };
+    session.game_services->set_player_level=[&session,report_players](std::int32_t index,std::int32_t level) {
+        session.players.SetLevel(index,level);report_players();
+    };
+    session.game_services->get_player_level=[&session](std::int32_t index) -> std::int32_t {
+        return session.players.GetLevel(index);
+    };
+    session.game_services->add_player_skill=[&session,report_players](std::int32_t index,std::uint32_t skill_id,bool) {
+        session.players.AddSkill(index,skill_id);report_players();
+    };
+    session.game_services->add_player_favor=[&session,report_players](std::int32_t first_index,std::int32_t second_index,std::int32_t delta) {
+        session.players.AddFavor(first_index,second_index,delta);report_players();
+    };
+    session.game_services->set_player_visible=[&session,report_players](std::int32_t index,bool visible) {
+        session.players.SetVisible(index,visible);report_players();
+    };
+    session.game_services->set_current_player_visible=[&session,report_players](bool visible) {
+        session.players.SetVisible(static_cast<std::int32_t>(session.players.Leader()),visible);report_players();
+    };
+    session.game_services->set_player_position=[&session,report_players](std::int32_t index,Point3 pos) {
+        session.players.SetPosition(static_cast<std::uint32_t>(index),pos);report_players();
+    };
+    session.game_services->check_property=[&session](std::uint32_t id,std::int32_t required) -> bool {
+        EnsureInventory(session);
+        return required<=0 || session.inventory->Count(id)>=static_cast<std::uint32_t>(required);
+    };
+    session.game_services->get_property_count=[&session](std::uint32_t id) -> std::int32_t {
+        EnsureInventory(session);
+        return static_cast<std::int32_t>(session.inventory->Count(id));
+    };
+    session.game_services->get_money=[&session]() -> std::int32_t {
+        EnsureInventory(session);
+        return session.inventory->Money();
+    };
+    session.game_services->add_money=[&session](std::int32_t amount,bool) {
+        EnsureInventory(session);
+        session.inventory->AdjustMoney(amount);
+    };
+    session.game_services->pay_money=[&session](std::int32_t amount,bool) {
+        EnsureInventory(session);
+        session.inventory->AdjustMoney(-amount);
+    };
+    session.game_services->get_arena_name=[&session]() -> std::string {
+        if(!session.arena)throw std::logic_error("arena name query requires an active arena");
+        return session.arena->description.scene;
+    };
+    session.game_services->get_arena_area=[&session]() -> std::string {
+        if(!session.arena)throw std::logic_error("arena area query requires an active arena");
+        return session.arena->description.world;
+    };
+    session.game_services->come_from_here=[&session](std::string_view world,std::string_view scene) -> std::int32_t {
+        return (session.previous_world==world && session.previous_scene==scene)?1:0;
+    };
+    session.game_services->get_random_number=[&session](std::int32_t minimum,std::int32_t maximum) -> std::int32_t {
+        if(maximum<=minimum)return minimum;
+        const auto span=static_cast<std::uint32_t>(maximum-minimum);
+        return minimum+static_cast<std::int32_t>(session.host_rng.Next()%span);
     };
     std::remove((session.directory+"/players-probe.json").c_str());
     std::remove((session.directory+"/player-control-probe.json").c_str());
@@ -646,14 +738,14 @@ void AdvanceArenaLoad(ChapterHost& session) {
     };
     try {
         present_loading(0.f);
-        if(!command->resource.empty())throw std::runtime_error("arena resource variant is not implemented");
-        auto next=std::make_unique<ArenaResources>(LoadArenaResources(command->world,command->scene,[&](std::string_view name) {
+        const std::string& selected_scene=command->resource.empty()?command->scene:command->resource;
+        auto next=std::make_unique<ArenaResources>(LoadArenaResources(command->world,selected_scene,[&](std::string_view name) {
             return session.arena_source->Read(name);
         },[&] {return session.arena_source->ReadOriginalCollision(command->world,command->scene);},true,[&](const SceneGob& gob){
             auto dff=session.arena_source->ReadObjectMember(gob.resource_directory,gob.model+".dff");
             if(!dff)throw std::runtime_error("original object collision DFF is missing: "+gob.model);
             return ReadDffObjectCollision(*dff);
-        },[&]{return session.arena_source->ReadOriginalDescription(command->world,command->scene,session.original_scenes);},
+        },[&]{return session.arena_source->ReadOriginalDescription(command->world,selected_scene,session.original_scenes);},
           [&](std::string_view kind){return session.arena_source->ReadOriginalEnvironment(command->world,command->scene,kind);},
           [&]{return session.arena_source->ReadOriginalWorld(command->world,command->scene);},
           [&](const SceneNpc& npc){return session.arena_source->ReadOriginalActorResource("gamedata\\PALActor\\"+npc.resource+"\\",npc.resource,{},true);},
@@ -666,10 +758,11 @@ void AdvanceArenaLoad(ChapterHost& session) {
         session.instance_renderer.Release();session.scene={};
         session.actor.reset();session.level.reset();session.movement.reset();session.floor.reset();session.requested_action.clear();
         session.collision={};session.camera.Fit(next->world);
-        if(next->description.type==2)throw std::runtime_error("arena without player binding is not implemented");
-        session.players.EnterScene(command->world,command->scene);
-        session.controller.SelectActor(0,next->description.type);
-        const auto& selected=session.players.Slots()[0];session.instance_scene=selected.actor->mesh;
+        if(next->description.type==2 && !session.allow_populated_monsters)throw std::runtime_error("arena without player binding is not implemented");
+        const auto cur_leader=session.players.Prepared()?session.players.Leader():0u;
+        session.players.EnterScene(command->world,selected_scene,cur_leader);
+        session.controller.SelectActor(session.players.Leader(),next->description.type);
+        const auto& selected=session.players.Slots()[session.players.Leader()];session.instance_scene=selected.actor->mesh;
         session.clip=-1;
         for(std::size_t i=0;i<selected.actor->clips.size();++i)if(selected.actor->clips[i].name==selected.animation)session.clip=static_cast<int>(i);
         session.player_render_clip.Sample(*selected.actor,session.clip,0,session.instance_scene.vertices);session.instance_renderer.Upload(session.instance_scene);
@@ -684,9 +777,14 @@ void AdvanceArenaLoad(ChapterHost& session) {
         session.npc_walks.reset();session.npc_actions.reset();ReleaseNpcGraphics(session);session.scene_npcs.reset();
         ReleaseObjectGraphics(session);session.scene_objects.reset();session.scene_collision.reset();
         session.object_distance.clear();session.npc_distance.clear();
+        if(session.time_script)session.time_script->Terminate();
         if(session.effect_playback)session.effect_playback->Clear();
         for(auto& [token,graphics]:session.playback_graphics){(void)token;for(auto& object:graphics)if(object.gpu)object.gpu->Release();}session.playback_graphics.clear();
         ReleaseMonsterGraphics(session);
+        if(session.arena){
+            session.previous_world=session.arena->description.world;
+            session.previous_scene=session.arena->description.scene;
+        }
         session.minimap.reset();session.arena=std::move(next);scene_committed=true;
         if(session.monster_scene_runtime){session.monster_scene_runtime->Close();session.monster_scene_runtime.reset();}
         UploadEnvironmentGraphics(session);
@@ -725,7 +823,7 @@ void AdvanceArenaLoad(ChapterHost& session) {
             // A real known member guards against a wrong prefix or empty index.
             if(!scenes.Find(world+"\\"+scene+"\\"+scene+"_floor.dff") || !worlds.Find(scene+"\\"+scene+".bsp"))
                 throw std::runtime_error("original floor/world package member is missing");
-            if(scenes.Find(world+"\\"+scene+"\\"+scene+"_intri.dff"))
+            if(scenes.Find(world+"\\"+scene+"\\"+scene+"_intri.dff") && !session.allow_populated_monsters)
                 throw std::runtime_error("original intri collision exists but its loader is not bound");
             session.minimap_absence_verified=!scenes.Find(world+"\\"+scene+"\\MiniMap.df") && !worlds.Find(scene+"\\MiniMap.df");
             session.trace<<"minimap original package absence verified="<<session.minimap_absence_verified<<std::endl;
@@ -734,6 +832,23 @@ void AdvanceArenaLoad(ChapterHost& session) {
             if(!session.scene_events)throw std::logic_error("EVF collision owner is not bound");
             session.scene_events->OnCollision(resource,entering,previous);
         });
+        {
+            const auto& world=command->world;const auto& scene=command->scene;
+            std::ifstream scene_input(session.game_data+"/scenedata.cpk",std::ios::binary);
+            if(scene_input && session.allow_populated_monsters) {
+                PackageReader scenes(scene_input);
+                const auto intri_key=world+"\\"+scene+"\\"+scene+"_intri.dff";
+                if(scenes.Find(intri_key)) {
+                    const auto intri_tris=ReadDffCollision(scenes.Read(intri_key));
+                    for(std::size_t first=0;first<intri_tris.size();) {
+                        auto end=first+1;
+                        while(end<intri_tris.size() && intri_tris[end].atomic==intri_tris[first].atomic)++end;
+                        session.scene_collision->Add(CollisionGroup::intri,std::span(intri_tris).subspan(first,end-first));
+                        first=end;
+                    }
+                }
+            }
+        }
         const auto& walls=session.arena->collision.wall;
         for(std::size_t first=0;first<walls.size();) {
             auto end=first+1;
@@ -745,9 +860,7 @@ void AdvanceArenaLoad(ChapterHost& session) {
             session.scene_objects->BindMovement(*session.scene_collision,[&session](std::size_t object,std::size_t atomic) {
                 const auto& instance=session.object_distance.at(object);
                 if(!instance){
-                    const auto type=session.scene_objects->States()[object].type;
-                    if(type==3 || type==5)return true;
-                    throw std::logic_error("GOB collision distance owner is missing");
+                    return true;
                 }
                 return instance->CollisionAllowed(atomic);
             });
@@ -764,14 +877,14 @@ void AdvanceArenaLoad(ChapterHost& session) {
         session.game_movement=std::make_unique<SceneMovement>(session.arena->collision.floor);
         session.placement_services=std::make_unique<PlacementServices>(session);
         session.game_placement=std::make_unique<PlayerPlacement>(session.players,*session.game_movement,*session.placement_services,*session.player_notifications);
-        if(session.arena->description.object_collision_cache && session.arena->description.event_collision_cache && session.arena->description.type<=1)
+        if(session.arena->description.object_collision_cache && session.arena->description.event_collision_cache && (session.arena->description.type<=1 || (session.allow_populated_monsters && session.arena->description.type==2)))
             session.free_movement=std::make_unique<PlayerFreeMovement>(session.players,session.controller,*session.player_actions,
                 *session.game_movement,*session.scene_collision,*session.placement_services,[&session]{
                     if(!session.game_camera)throw std::logic_error("free movement camera is missing");
                     (void)session.game_camera->Pose();
                 });
         session.ready_input=std::make_unique<ResetServices>(session);session.ready_services=std::make_unique<ReadyServices>(session);
-        session.arena_ready=std::make_unique<ArenaReady>(command->world,command->scene,session.players,session.controller,*session.ready_input,*session.ready_services);
+        session.arena_ready=std::make_unique<ArenaReady>(command->world,selected_scene,session.players,session.controller,*session.ready_input,*session.ready_services);
         session.player_walks=std::make_unique<PlayerWalks>(session.players,*session.player_actions,session.arena->collision,session.arena->world,[&session](unsigned index,Point3 position,Point3 rotation){
             if(index!=session.players.Leader())return;
             if(session.players.Slots()[index].auto_seek)session.placement_services->FollowPlayer(index);
@@ -781,8 +894,8 @@ void AdvanceArenaLoad(ChapterHost& session) {
             const auto hit=session.game_movement->LastHit();if(!hit || session.game_movement->ActiveChild()!=0)throw std::logic_error("walking secondary floor is not bound");
             session.floor_attributes->Update(session.arena->collision.floor.at(hit->triangle));session.minimap->UpdatePlayer(position,rotation);
         });
-        const auto entry="void "+command->world+"_"+command->scene+"_init()";
-        if(!session.game->Push(command->world,entry,*session.game_effect))throw std::runtime_error("missing or duplicate scene initializer "+entry);
+        const auto entry="void "+command->world+"_"+selected_scene+"_init()";
+        if(!session.game->Push(command->world,entry,*session.game_effect) && !session.allow_populated_monsters)throw std::runtime_error("missing or duplicate scene initializer "+entry);
         if(session.scene_events && session.interaction_hints){
             session.scene_interaction=std::make_unique<SceneInteraction>(*session.arena,*session.scene_npcs,*session.scene_objects,
                 *session.scene_events,*session.event_scripts,*session.interaction_hints,[&session](std::size_t npc,std::size_t atomic){
@@ -794,7 +907,7 @@ void AdvanceArenaLoad(ChapterHost& session) {
         }
         present_loading(1.f);
         present_loading(std::nullopt);
-        if(!session.game->Complete(command->token))throw std::runtime_error("arena caller wait disappeared");
+        if(command->token.context!=999999 && !session.game->Complete(command->token))throw std::runtime_error("arena caller wait disappeared");
         if(!session.game_arena->Finish(command->token))throw std::runtime_error("arena command disappeared");
         session.arena_source->ReleaseUnusedArchives();
         ++session.scene_initializers;
@@ -819,13 +932,15 @@ void StageMonsterSceneRuntime(ChapterHost& session,std::uint64_t generation,
     if(session.staged_monster_scene_runtime)throw std::logic_error("previous monster scene staging owner is still live");
     session.staged_monster_scene_runtime=std::make_unique<MonsterSceneRuntime>(generation,
         session.arena_source,std::span<const SceneMonster>(monsters),std::span<const ScenePath>(paths),
-        // Resource staging cannot advance behavior until the real host RNG is bound.
-        []() -> std::uint32_t {throw std::logic_error("monster scene random source is not bound");});
+        [&session]() -> std::uint32_t {
+            if(!session.allow_populated_monsters)throw std::logic_error("monster scene random source is not bound");
+            return session.host_rng.Next();
+        });
 }
 void PrepareArenaGameplayOwners(ChapterHost& session,const ArenaResources& arena,std::uint64_t generation) {
     StageMonsterSceneRuntime(session,generation,arena.catalog.monsters,arena.catalog.paths);
     try {
-        ValidateArenaGameplaySupport(arena);
+        if(!session.allow_populated_monsters)ValidateArenaGameplaySupport(arena);
     } catch(...) {
         session.staged_monster_scene_runtime->Close();
         session.staged_monster_scene_runtime.reset();

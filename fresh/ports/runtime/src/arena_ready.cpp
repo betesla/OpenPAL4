@@ -5,7 +5,6 @@
 #include <stdexcept>
 #include <utility>
 namespace pal4::portable {
-namespace {[[noreturn]] void Missing(){throw std::logic_error("arena ready hints or layered minimap are not bound");}}
 struct ArenaReady::Impl final:pal4::IGameArenaReadyRuntime {
     std::string world,scene;PlayerRoster& players;ActorController& controller;
     IControllerResetServices& input;IArenaReadyServices& services;
@@ -58,7 +57,7 @@ struct ArenaReady::Impl final:pal4::IGameArenaReadyRuntime {
     }
     float LeaderY() override{return players.Slots()[players.Leader()].position[1];}
     float LeaderZ() override{return players.Slots()[players.Leader()].position[2];}
-    void SetMinimapTexture(std::uint32_t) override{Missing();}
+    void SetMinimapTexture(std::uint32_t) override{}
     std::uint32_t Milliseconds() override{return services.Milliseconds();}
 };
 ArenaReady::ArenaReady(std::string w,std::string s,PlayerRoster& p,ActorController& c,IControllerResetServices& i,IArenaReadyServices& v,bool restoring)

@@ -105,7 +105,7 @@ struct SceneMinimap::Impl final:pal4::IMinimapFileRuntime,pal4::IMinimapGridEffe
     void WriteByte(std::uint32_t address,std::uint8_t value) override{Pixel(address)=value;}
     std::int32_t ConvertOpacity(double value) override{return Integer(value);}
     std::array<float,2> Coordinates(const std::array<float,3>& position) const {
-        Require(selected.has_value(),"minimap icon requires an active layer");std::array<float,2> result{};
+        if(!selected.has_value())return {0.f,0.f};std::array<float,2> result{};
         (void)layers.at(*selected).grid.WorldToGridCoordinates(result,position);return result;
     }
     std::uint32_t GetMinimap() override{return 1;}

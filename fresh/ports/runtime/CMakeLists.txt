@@ -85,7 +85,7 @@ add_library(pal4_portable_game_math STATIC ../../src/game_vector_math.cpp ../../
 target_include_directories(pal4_portable_game_math PRIVATE ../../include)
 target_compile_features(pal4_portable_game_math PUBLIC cxx_std_20)
 set_target_properties(pal4_portable_game_math PROPERTIES POSITION_INDEPENDENT_CODE ON)
-add_library(pal4_portable_actor STATIC src/actor.cpp src/original_actor.cpp src/original_animation.cpp src/role.cpp src/player.cpp src/player_leader.cpp src/controller.cpp src/controller_reset.cpp ../../src/player_manager_leader_transition.cpp)
+add_library(pal4_portable_actor STATIC src/actor.cpp src/original_actor.cpp src/original_animation.cpp src/role.cpp src/player.cpp src/player_leader.cpp src/controller.cpp src/controller_reset.cpp ../../src/player_manager_leader_transition.cpp ../../src/player_manager_slot_inventory_state.cpp ../../src/script_party_membership.cpp)
 target_compile_definitions(pal4_portable_actor PUBLIC PAL4_MODERN_GAMEPAD=$<BOOL:${PAL4_MODERN_GAMEPAD}>)
 target_sources(pal4_portable_actor PRIVATE src/controller_free_input.cpp
     ../../src/actor_control_free_movement.cpp ../../src/actor_control_mouse_projection.cpp)

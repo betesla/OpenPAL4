@@ -35,7 +35,7 @@ struct PlayerWalks::Impl final:pal4::IScriptPlayerWalkRuntime,pal4::IBaseObjectM
     unsigned PlanRoute(unsigned source,pal4::PlayerWalkPoint& target) override{Require(source==0x2194,"invalid walk route source");auto p=Point3{target.x,target.y,target.z};const auto face=surface.Snap(p);projected=p;target={p[0],p[1],p[2]};return face;}
     SurfaceMotion& Motion(unsigned movement){const auto i=Index(movement-pal4::ScriptPlayerWalk::kMovementOffset);Require(bool(motions[i]),"walk collision actor is not initialized");return *motions[i];}
     bool StartMovement(unsigned movement,const pal4::PlayerWalkPoint& from,const pal4::PlayerWalkPoint& to,unsigned face,unsigned mode) override {
-        Require(mode==0,"alternate movement mode is not bound");const auto i=Index(movement-pal4::ScriptPlayerWalk::kMovementOffset);
+        Require(mode==0,"alternate movement mode is not bound");const auto i=Index(movement-pal4::ScriptPlayerWalk::kMovementOffset);current=i;
         if(!motions[i]){const auto sphere=ActorBindSphere(*players.Slots()[i].actor);Require(sphere.has_value(),"walk actor radius is missing");motions[i]=std::make_unique<SurfaceMotion>(surface,Point3{from.x,from.y,from.z},(*sphere)[3],[this](Point3 a,Point3 b){return WorldSegmentBlocked(world,a,b);});}
         return motions[i]->Start({from.x,from.y,from.z},{to.x,to.y,to.z},face);
     }
@@ -52,7 +52,7 @@ struct PlayerWalks::Impl final:pal4::IScriptPlayerWalkRuntime,pal4::IBaseObjectM
     void Flush(pal4::PlayerWalkWaitState& s) override{CheckPending(s);}
     void AddHandler(unsigned queue,pal4::PlayerWalkWaitState* s) override{Require(s!=nullptr,"null walk handler");CheckPending(*s);Require(queue==0x3054 && s->vtable_address==pal4::ScriptPlayerWalk::kVtable && s->phase==1,"invalid walk handler");handlers.push_back(std::move(pending));}
     unsigned CleanupName() override{return 0;}
-    unsigned ShowPathError() override{throw std::runtime_error("player walk cannot find a collision path");}
+    unsigned ShowPathError() override{players.SetPosition(current,projected);moved(current,players.Slots()[current].position,players.Slots()[current].rotation);return 0;}
     bool MovementActive(unsigned movement) override{const auto i=Index(movement-pal4::ScriptPlayerWalk::kMovementOffset);return motions[i] && motions[i]->Active();}
     void StopMovement(unsigned movement) override{Motion(movement).Stop();}
     void Close(pal4::PlayerWalkWaitState& s) override{for(auto& h:handlers)if(&h->state==&s){h->closed=true;return;}throw std::logic_error("walk handler is not registered");}
@@ -68,17 +68,17 @@ struct PlayerWalks::Impl final:pal4::IScriptPlayerWalkRuntime,pal4::IBaseObjectM
 };
 PlayerWalks::PlayerWalks(PlayerRoster& p,PlayerActions& a,const CollisionMesh& collision,const Scene& world,PlayerWalkMoved m):impl_(std::make_unique<Impl>(p,a,collision,world,std::move(m))){}
 PlayerWalks::~PlayerWalks()=default;
-ScriptResponse PlayerWalks::Start(ScriptToken token,int player,Point3 target,bool wait){for(float v:target)Require(std::isfinite(v),"invalid walk target");auto& s=*impl_;++s.calls;s.requested=target;s.request_token=token;const auto count=s.handlers.size();(void)pal4::ScriptPlayerWalk(s).WalkTo(player,{target[0],target[1],target[2]},wait);return {{},wait && s.handlers.size()>count};}
+ScriptResponse PlayerWalks::Start(ScriptToken token,int player,Point3 target,bool wait,bool run){for(float v:target)Require(std::isfinite(v),"invalid walk target");auto& s=*impl_;++s.calls;s.requested=target;s.request_token=token;const auto count=s.handlers.size();pal4::ScriptPlayerWalk runtime(s);if(run)(void)runtime.RunTo(player,{target[0],target[1],target[2]},wait);else(void)runtime.WalkTo(player,{target[0],target[1],target[2]},wait);return {{},wait && s.handlers.size()>count};}
 ScriptResponse PlayerWalks::End(ScriptToken token,int player){auto& s=*impl_;++s.end_calls;s.request_token=token;const auto count=s.handlers.size();(void)pal4::ScriptPlayerWalk(s).EndMoveIndexed(player);return {{},s.handlers.size()>count};}
 std::vector<PlayerWalkCompletion> PlayerWalks::Advance(float elapsed){
     Require(std::isfinite(elapsed) && elapsed>=0,"invalid walk frame time");auto& s=*impl_;++s.frames;
-    for(unsigned i=0;i<s.motions.size();++i)if(s.players.Slots()[i].active && s.motions[i] && s.motions[i]->Active()){s.motions[i]->Advance(elapsed);s.Apply(i);s.elapsed+=elapsed;}
+    for(unsigned i=0;i<s.motions.size();++i)if(s.motions[i] && s.motions[i]->Active()){s.motions[i]->Advance(elapsed);s.Apply(i);s.elapsed+=elapsed;}
     std::vector<PlayerWalkCompletion> result;
     for(auto& h:s.handlers){if(!h->closed)pal4::ScriptPlayerWalk(s).Update(h->state);if(h->closed){++s.completed;if(h->wait){++s.blocking_completed;result.push_back({h->token,{}});}}}
     std::erase_if(s.handlers,[](auto& h){return h->closed;});return result;
 }
 bool PlayerWalks::Requested() const{return impl_->calls!=0;}
-bool PlayerWalks::Active() const{for(std::size_t i=0;i<impl_->motions.size();++i)if(impl_->players.Slots()[i].active && impl_->motions[i] && impl_->motions[i]->Active())return true;return false;}
+bool PlayerWalks::Active() const{for(std::size_t i=0;i<impl_->motions.size();++i)if(impl_->motions[i] && impl_->motions[i]->Active())return true;return false;}
 void PlayerWalks::WriteReport(std::ostream& out) const {
     const auto& s=*impl_;out<<std::setprecision(9)<<"{\"calls\":"<<s.calls<<",\"end_calls\":"<<s.end_calls<<",\"completed\":"<<s.completed<<",\"blocking_completed\":"<<s.blocking_completed<<",\"handlers\":"<<s.handlers.size()<<",\"frames\":"<<s.frames<<",\"moved_frames\":"<<s.moved_frames<<",\"elapsed\":"<<s.elapsed<<",\"linked_edges\":"<<s.surface.LinkedEdges()<<",\"requested\":";Json(out,s.requested);out<<",\"projected\":";Json(out,s.projected);out<<",\"players\":[";
     for(unsigned i=0;i<4;++i){if(i)out<<',';out<<"{\"position\":";Json(out,s.players.Slots()[i].position);out<<",\"rotation\":";Json(out,s.players.Slots()[i].rotation);out<<",\"motion\":";if(!s.motions[i]){out<<"null}";continue;}const auto& m=*s.motions[i];out<<"{\"active\":"<<(m.Active()?"true":"false")<<",\"status\":"<<m.Status()<<",\"face\":"<<m.Face()<<",\"position\":";Json(out,m.Position());out<<",\"path\":[";const auto route=m.Path();for(std::size_t j=0;j<route.size();++j){if(j)out<<',';out<<"{\"position\":";Json(out,route[j].position);out<<",\"face\":"<<route[j].face<<'}';}out<<"]}}";}out<<"]}";

@@ -147,29 +147,38 @@ EffectPlayback::EffectPlayback(PlanLoader p,EffectTextures& t,ParticleRandom& r,
 EffectPlayback::~EffectPlayback()=default;
 EffectPlayback::Handle EffectPlayback::Create(std::string_view n,std::int32_t repeats,bool clip){return impl_->Create(n,repeats,clip);}
 std::string EffectPlayback::SupportIssue(std::string_view name) const{
-    Require(!name.empty() && name.size()<=128 && name.find_first_of("/\\\0",0,3)==std::string_view::npos,"invalid effect resource name");
+    if(name.empty() || name.size()>128 || name.find_first_of("/\\\0",0,3)!=std::string_view::npos)return "invalid effect resource name";
     std::string canonical(name);for(auto& c:canonical)if(c>='a' && c<='z')c=static_cast<char>(c-'a'+'A');
-    const auto plan=impl_->load(canonical);
-    if(plan.camera_start!=1.f)return "camera probability";
-    for(const auto& id:plan.object_ids){
-        const auto& node=plan.templates.at(id);const auto* attr=node.FindAttribute("Attr_Class_Name");
-        const auto* type=attr?std::get_if<std::string>(&attr->value):nullptr;
-        if(!type)throw std::logic_error("effect template class is missing");
-        if(*type=="RtkPrtStdAtomicObject" || *type=="CylinderObject")continue;
-        const auto* dummy=node.FindAttribute("Attr_Dumy");
-        if(*type=="ClumpObject" && dummy && std::bit_cast<std::int32_t>(dummy->ToInt(0))>0)continue;
-        return "object class: "+*type;
+    try {
+        const auto plan=impl_->load(canonical);
+        if(plan.camera_start!=1.f)return "camera probability";
+        for(const auto& id:plan.object_ids){
+            const auto& node=plan.templates.at(id);const auto* attr=node.FindAttribute("Attr_Class_Name");
+            const auto* type=attr?std::get_if<std::string>(&attr->value):nullptr;
+            if(!type)throw std::logic_error("effect template class is missing");
+            if(*type=="RtkPrtStdAtomicObject"){
+                const auto* bb=node.FindAttribute("Attr_Prt_Is_Billboard");
+                if(bb && std::bit_cast<std::int32_t>(bb->ToInt(0))>0)return "particle collection path";
+                continue;
+            }
+            if(*type=="CylinderObject")continue;
+            const auto* dummy=node.FindAttribute("Attr_Dumy");
+            if(*type=="ClumpObject" && dummy && std::bit_cast<std::int32_t>(dummy->ToInt(0))>0)continue;
+            return "object class: "+*type;
+        }
+        for(std::size_t i=0;i<plan.task_ids.size();++i){
+            const auto& target=plan.templates.at(plan.object_ids.at(plan.task_ids[i]));
+            const auto* type=target.FindAttribute("Attr_Class_Name");const auto* dummy=target.FindAttribute("Attr_Dumy");
+            if(type && std::get<std::string>(type->value)=="ClumpObject" && dummy && std::bit_cast<std::int32_t>(dummy->ToInt(0))>0)continue;
+            const auto* attr=plan.task_parameters[i].FindAttribute("Attr_Class_Name");
+            const auto* task=attr?std::get_if<std::string>(&attr->value):nullptr;
+            if(!task)throw std::logic_error("effect task class is missing");
+            if(*task!="ShowobjTask" && *task!="HideobjTask" && *task!="ScaleTask" && *task!="ChangeColorTask" && *task!="DecressTask")return "task class: "+*task;
+        }
+        return {};
+    } catch (const std::exception& e) {
+        return e.what();
     }
-    for(std::size_t i=0;i<plan.task_ids.size();++i){
-        const auto& target=plan.templates.at(plan.object_ids.at(plan.task_ids[i]));
-        const auto* type=target.FindAttribute("Attr_Class_Name");const auto* dummy=target.FindAttribute("Attr_Dumy");
-        if(type && std::get<std::string>(type->value)=="ClumpObject" && dummy && std::bit_cast<std::int32_t>(dummy->ToInt(0))>0)continue;
-        const auto* attr=plan.task_parameters[i].FindAttribute("Attr_Class_Name");
-        const auto* task=attr?std::get_if<std::string>(&attr->value):nullptr;
-        if(!task)throw std::logic_error("effect task class is missing");
-        if(*task!="ShowobjTask" && *task!="HideobjTask" && *task!="ScaleTask" && *task!="ChangeColorTask" && *task!="DecressTask")return "task class: "+*task;
-    }
-    return {};
 }
 bool EffectPlayback::Contains(Handle h) const{return EffectHandle::DialogNeedsUpdate(h,*impl_);}
 const EffectDialog* EffectPlayback::Dialog(Handle h) const{if(!Contains(h))return nullptr;return impl_->Get(impl_->active.at(h.id).effect).dialog.get();}

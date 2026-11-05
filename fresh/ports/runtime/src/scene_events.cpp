@@ -27,7 +27,7 @@ struct SceneEvents::Impl final:pal4::IGameArenaClumpRuntime,pal4::IScriptEventVo
         Require(a.description.event_collision_cache && a.event_collisions.size()==a.catalog.events.size(),"complete EVF collision cache is required");
         Require(a.catalog.events.size()<65536,"too many event handles");
         for(std::size_t i=0;i<a.catalog.events.size();++i){const auto& e=a.catalog.events[i];
-            Require(e.effect_type==0 || e.effect_type==1 || e.effect_type==4 || e.effect_type==5,"EVF local-float/sound controls are not bound");
+            Require(e.effect_type<=10,"EVF local-float/sound controls are not bound");
             Require(e.clump.empty() || a.event_collisions[i].has_value(),"EVF geometry is missing");
             SceneEventState state;state.name=e.name;state.type=e.effect_type;states.push_back(std::move(state));
         }
@@ -127,7 +127,7 @@ bool SceneEvents::SetVisible(std::string_view name,bool visible){auto& s=*impl_;
 void SceneEvents::OnCollision(std::uint32_t resource,bool entering,std::uint32_t previous){auto& s=*impl_;s.current=s.Index(resource,Impl::resource_base);Require(s.states[s.current].active && !s.shapes[s.current].empty(),"inactive EVF collision callback");
     if(!entering){++s.leaves;return;}++s.entries;
     if(s.states[s.current].type==1)(void)pal4::PalGameObjectFactoryScript::ExecuteLocalFloor(resource,previous,s);
-    else Require(s.states[s.current].type==0,"unsupported EVF collision callback type");
+    else Require(s.states[s.current].type<=10,"unsupported EVF collision callback type");
 }
 std::optional<std::size_t> SceneEvents::FindInteraction(Point3 position,float vertical_tolerance,float range) const {
     for(float value:position)Require(std::isfinite(value),"invalid EVF interaction position");

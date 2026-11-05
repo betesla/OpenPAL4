@@ -10,7 +10,7 @@ public:
     ~PlayerWalks();
     PlayerWalks(const PlayerWalks&)=delete;
     PlayerWalks& operator=(const PlayerWalks&)=delete;
-    ScriptResponse Start(ScriptToken token,std::int32_t player,Point3 target,bool wait);
+    ScriptResponse Start(ScriptToken token,std::int32_t player,Point3 target,bool wait,bool run=false);
     ScriptResponse End(ScriptToken token,std::int32_t player);
     std::vector<PlayerWalkCompletion> Advance(float elapsed);
     bool Requested() const;

@@ -63,6 +63,7 @@
 #include "pal4/portable/camera_tracks.h"
 #include "pal4/portable/floor_attributes.h"
 #include "pal4/temperature_floor_selection.h"
+#include "pal4/random_number_generator.h"
 #include <chrono>
 #include <fstream>
 #include <set>
@@ -80,6 +81,9 @@ struct ChapterHost {
     std::function<std::unique_ptr<std::istream>(std::string_view)> open_cache;
     std::string directory, name, requested_scene, error, gl_version;
     std::string game_data;
+    std::string previous_world, previous_scene;
+    bool allow_populated_monsters{false};
+    pal4::RandomNumberGenerator host_rng;
     EffectObjectCounts effect_preview_counts;
     std::unique_ptr<std::ifstream> effect_preview_stream;
     std::unique_ptr<PackageReader> effect_preview_package;
