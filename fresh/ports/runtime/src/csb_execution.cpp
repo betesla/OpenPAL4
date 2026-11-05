@@ -29,6 +29,7 @@
  */
 #include "pal4/portable/csb_execution.h"
 #include <bit>
+#include <cmath>
 #include <sstream>
 #include <stdexcept>
 
@@ -70,6 +71,15 @@ struct CsbExecution::Impl {
     }
     void Push(Cell value) {if(!sp)throw std::runtime_error("legacy stack overflow");stack[--sp]=std::move(value);}
     Cell Pop(){auto value=Top();stack[sp++]=std::uint32_t{};return value;}
+    void PushDouble(double value) {
+        const auto bits=std::bit_cast<std::uint64_t>(value);
+        Push(static_cast<std::uint32_t>(bits>>32));
+        Push(static_cast<std::uint32_t>(bits));
+    }
+    double PopDouble() {
+        const auto lo=std::uint64_t(Number(Pop())),hi=std::uint64_t(Number(Pop()));
+        return std::bit_cast<double>(lo|(hi<<32));
+    }
     static std::uint32_t Number(const Cell& value) {
         if(!std::holds_alternative<std::uint32_t>(value))throw std::runtime_error("legacy numeric slot has a reference");
         return std::get<std::uint32_t>(value);
@@ -257,6 +267,17 @@ struct CsbExecution::Impl {
         case 65:if(s<0)Push(Reference{true,static_cast<std::size_t>(-std::int64_t(s)-1),false});else Push(Reference{false,static_cast<std::size_t>(u&65535),true});break;
         // AngelScript 2.2 BC_SET8: reserve two 32-bit slots, low word at SP.
         case 66:Push(static_cast<std::uint32_t>(i.operand>>32));Push(u);break;
+        case 72: {const auto r=PopDouble(),l=PopDouble();PushDouble(l+r);break;}
+        case 73: {const auto r=PopDouble(),l=PopDouble();PushDouble(l-r);break;}
+        case 74: {const auto r=PopDouble(),l=PopDouble();PushDouble(l*r);break;}
+        case 75: {const auto r=PopDouble(),l=PopDouble();PushDouble(l/r);break;}
+        case 76: {const auto r=PopDouble(),l=PopDouble();PushDouble(std::fmod(l,r));break;}
+        case 77:PushDouble(-PopDouble());break;
+        case 78: {const auto r=PopDouble(),l=PopDouble();Push(static_cast<std::uint32_t>(l<r?-1:l>r?1:0));break;}
+        case 81:Push(std::bit_cast<std::uint32_t>(static_cast<float>(PopDouble())));break;
+        case 82:PushDouble(static_cast<double>(std::bit_cast<std::int32_t>(Number(Pop()))));break;
+        case 83:Push(static_cast<std::uint32_t>(static_cast<std::int32_t>(PopDouble())));break;
+        case 84:PushDouble(static_cast<double>(std::bit_cast<float>(Number(Pop()))));break;
         case 85:pc+=Number(Pop());break;
         case 86:return_bits=Number(Pop());break;
         case 88:Push(static_cast<std::uint32_t>(return_bits));break;
