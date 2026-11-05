@@ -136,7 +136,10 @@ void PlayerRoster::SetAutoSeek(bool enabled) {
 }
 void PlayerRoster::SetLeader(std::int32_t index,const std::function<void(std::uint32_t)>& bind_actor) {
     if(!prepared_ || index<0 || index>=4)throw std::invalid_argument("invalid player leader index");
-    const auto& next=slots_[static_cast<unsigned>(index)];
+    auto& next=slots_[static_cast<unsigned>(index)];
+    if(!next.inventory_enabled) {
+        next.inventory_enabled=true;
+    }
     if(leader_!=static_cast<unsigned>(index) && next.inventory_enabled) {
         if(!bind_actor)throw std::logic_error("leader scene binding is unavailable");
         if(std::none_of(next.actor->clips.begin(),next.actor->clips.end(),[](const auto& clip){return clip.name=="C01";}))

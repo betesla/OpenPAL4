@@ -1,5 +1,6 @@
 #include "pal4/portable/effect_document.h"
 #include "pal4/gob_effect.h"
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <iomanip>
@@ -58,7 +59,11 @@ std::optional<GobEffectParameters> ReadGobEffectParameters(const BinaryXmlConfig
 EffectDocuments::EffectDocuments(EffectMemberReader reader):read_(std::move(reader)){if(!read_)throw std::invalid_argument("effect package reader is not bound");}
 std::size_t EffectDocuments::Size() const{std::size_t count=0;for(const auto& entry:documents_)if(!entry.second.expired())++count;return count;}
 std::shared_ptr<const EffectDocument> EffectDocuments::Load(std::string_view name){
-    if(name.empty() || name.size()>255 || name.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")!=std::string_view::npos)throw std::invalid_argument("invalid effect document name");
+    const auto valid_char=[](unsigned char c){
+        if(c>=0x80)return true;
+        return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='_'||c=='-'||c=='.'||c==' '||c=='('||c==')'||c=='+'||c=='~';
+    };
+    if(name.empty() || name.size()>255 || !std::all_of(name.begin(),name.end(),valid_char))throw std::invalid_argument("invalid effect document name");
     for(auto i=documents_.begin();i!=documents_.end();)if(i->second.expired())i=documents_.erase(i);else ++i;
     if(const auto i=documents_.find(std::string(name));i!=documents_.end())if(auto existing=i->second.lock())return existing;
     auto document=std::make_shared<EffectDocument>();document->name=name;document->member="script\\"+std::string(name)+".eft";

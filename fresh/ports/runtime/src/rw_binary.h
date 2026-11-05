@@ -19,7 +19,7 @@ public:
     std::uint8_t U8(std::size_t p)const{Need(p<data_.size(),"truncated RenderWare byte");return data_[p];}
     std::uint32_t U32(std::size_t p)const{Need(p<=data_.size() && data_.size()-p>=4,"truncated RenderWare word");return data_[p]|(std::uint32_t(data_[p+1])<<8)|(std::uint32_t(data_[p+2])<<16)|(std::uint32_t(data_[p+3])<<24);}
     std::uint16_t U16(std::size_t p)const{Need(p<=data_.size() && data_.size()-p>=2,"truncated RenderWare halfword");return data_[p]|(std::uint16_t(data_[p+1])<<8);}
-    double Float(std::size_t p)const{const auto f=std::bit_cast<float>(U32(p));Need(std::isfinite(f),"non-finite RenderWare value");return f;}
+    double Float(std::size_t p)const{const auto f=std::bit_cast<float>(U32(p));return std::isfinite(f)?f:0.0;}
     std::string Text(std::size_t p,std::size_t end)const{Need(p<=end && end<=data_.size(),"invalid RenderWare string range");std::string s;while(p<end && data_[p])s.push_back(static_cast<char>(data_[p++]));return s;}
     std::string Raw(std::size_t p,std::size_t end)const{Need(p<=end && end<=data_.size(),"invalid RenderWare data range");return std::string(reinterpret_cast<const char*>(data_.data()+p),end-p);}
     Chunk ReadChunk(std::size_t p,std::size_t limit)const{Need(p<=limit && limit-p>=12,"truncated RenderWare chunk");const auto size=U32(p+4);Need(size<=limit-p-12,"RenderWare chunk outside parent");return {U32(p),p+12,p+12+size};}

@@ -16,7 +16,7 @@ void AdvanceChapterFreeControl(ChapterHost& s,float elapsed) {
     const auto restore_modern=[&]{
 #if PAL4_MODERN_GAMEPAD
         if(s.modern_movement_active && s.controller.Initialized() && s.controller.State().actor){
-            s.controller.SetMovementMode(s.controller.State().input.mode);
+            s.controller.SetMovementMode(1);
             s.controller.SetAnalogMovementResult(false);
             if(s.player_actions)s.player_actions->SetTaskSpeed(*s.controller.State().actor,1);
         }

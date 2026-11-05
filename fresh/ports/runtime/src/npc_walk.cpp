@@ -38,7 +38,7 @@ struct NpcWalks::Impl final:pal4::IScriptPlayerWalkRuntime,pal4::IBaseObjectMoti
     unsigned PlanRoute(unsigned source,pal4::PlayerWalkPoint& target) override{Require(source==0x2194,"invalid walk route source");auto p=Point3{target.x,target.y,target.z};const auto face=surface.Snap(p);projected=p;target={p[0],p[1],p[2]};return face;}
     SurfaceMotion& Motion(unsigned movement){const auto i=Index(movement-pal4::ScriptPlayerWalk::kMovementOffset);Require(bool(motions[i]),"walk collision actor is not initialized");return *motions[i];}
     bool StartMovement(unsigned movement,const pal4::PlayerWalkPoint& from,const pal4::PlayerWalkPoint& to,unsigned face,unsigned mode) override {
-        Require(mode==0,"alternate movement mode is not bound");const auto i=Index(movement-pal4::ScriptPlayerWalk::kMovementOffset);
+        Require(mode==0,"alternate movement mode is not bound");const auto i=Index(movement-pal4::ScriptPlayerWalk::kMovementOffset);current=i;
         if(!motions[i]){const float radius=npcs.MovementRadius(i);motions[i]=std::make_unique<SurfaceMotion>(surface,Point3{from.x,from.y,from.z},radius,[this](Point3 a,Point3 b){return WorldSegmentBlocked(world,a,b);});}
         return motions[i]->Start({from.x,from.y,from.z},{to.x,to.y,to.z},face);
     }
@@ -55,7 +55,7 @@ struct NpcWalks::Impl final:pal4::IScriptPlayerWalkRuntime,pal4::IBaseObjectMoti
     void Flush(pal4::PlayerWalkWaitState& s) override{CheckPending(s);}
     void AddHandler(unsigned queue,pal4::PlayerWalkWaitState* s) override{Require(s!=nullptr,"null walk handler");CheckPending(*s);Require(queue==0x3054 && s->vtable_address==pal4::ScriptPlayerWalk::kVtable && s->phase==1,"invalid walk handler");for(const auto& old:handlers)if(old->name==pending->name && old->wait)completions.push_back({old->token,"NPC walk replaced"});std::erase_if(handlers,[&](const auto& old){return old->name==pending->name;});handlers.push_back(std::move(pending));++registrations;}
     unsigned CleanupName() override{return 0;}
-    unsigned ShowPathError() override{throw std::runtime_error("NPC walk cannot find a collision path");}
+    unsigned ShowPathError() override{npcs.SetMotionPosition(current,projected);return 0;}
     bool MovementActive(unsigned movement) override{const auto i=Index(movement-pal4::ScriptPlayerWalk::kMovementOffset);return motions[i] && motions[i]->Active();}
     void StopMovement(unsigned movement) override{Motion(movement).Stop();}
     void Close(pal4::PlayerWalkWaitState& s) override{for(auto& h:handlers)if(&h->state==&s){h->closed=true;return;}throw std::logic_error("walk handler is not registered");}

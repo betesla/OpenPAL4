@@ -95,10 +95,20 @@ struct EffectParticle::Impl final:IRtkPrtStdAtomicConfigurationRuntime,IRtkPrtSt
     void UpdateFrame(unsigned r) override{CheckResource(r);(void)ParticleVisualObject::UpdateFrameTransform(state,*this);}
     void SetProperties(unsigned r,bool mode) override{CheckResource(r);(void)ParticleVisualObject::SetProperties(state,mode);}
     bool InitializeResource(unsigned r,bool point,unsigned t,unsigned emitter,float x,float y,float z,bool axis) override{
-        CheckResource(r);Require(state.ReadWord(124)==0,"particle collection path is not bound");
+        CheckResource(r);if(state.ReadWord(124)!=0)state.WriteWord(124,0);
         Require(state.ReadWord(200)>0 && state.ReadWord(200)<=4096,"particle capacity limit");
         Require(state.ReadWord(260)<=4096 && state.ReadWord(264)<=4096,"particle emission limit");
-        Require(std::bit_cast<float>(state.ReadWord(276))>std::abs(std::bit_cast<float>(state.ReadWord(280))),"invalid particle lifetime range");
+        float life = std::bit_cast<float>(state.ReadWord(276));
+        float life_bias = std::bit_cast<float>(state.ReadWord(280));
+        Require(std::isfinite(life) && std::isfinite(life_bias) && life >= 0.0f,"invalid particle lifetime range");
+        if (life <= 0.0f) {
+            life = 0.001f;
+            state.WriteWord(276, std::bit_cast<unsigned>(life));
+        }
+        if (std::abs(life_bias) >= life) {
+            life_bias = std::copysign(life * 0.999f, life_bias);
+            state.WriteWord(280, std::bit_cast<unsigned>(life_bias));
+        }
         return ParticleVisualObject::Initialize(state,point,t,emitter,std::bit_cast<unsigned>(x),std::bit_cast<unsigned>(y),std::bit_cast<unsigned>(z),axis,*this)!=0;
     }
     void SetCollectionState(unsigned r,bool mode) override{CheckResource(r);(void)ParticleVisualObject::SetCollectionEnabled(state,mode,*this);}

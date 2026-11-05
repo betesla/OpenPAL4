@@ -121,8 +121,10 @@ std::vector<SceneEvent> ReadSceneEvents(std::istream& input) {
 std::vector<SceneCamera> ReadSceneCameras(std::istream& input) {
     Reader r(input);const auto count=r.Count();std::vector<SceneCamera> records;records.reserve(count);std::unordered_set<std::string> names;
     for(std::uint32_t i=0;i<count;++i) {
-        SceneCamera record;record.name=r.Text();Unique(names,record.name);for(auto& value:record.values)value=r.Word();
-        record.config=r.Xml();records.push_back(std::move(record));
+        SceneCamera record;record.name=r.Text();Unique(names,record.name);
+        for(std::size_t j=0;j<11;++j)record.values[j]=r.Word();
+        if(r.HasXmlAt(8)){record.values[11]=r.Word();record.values[12]=r.Word();record.config=r.Xml();}
+        records.push_back(std::move(record));
     }
     r.End();return records;
 }

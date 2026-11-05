@@ -48,16 +48,27 @@ struct PlayerActions::Impl final:pal4::IScriptPlayerActionRuntime,pal4::IScriptA
         if(!animation.Select(action))throw std::logic_error("original action clip is missing from cache: "+std::string(action));
         players.SelectAction(Index(actor),action);return 1;
     }
+    bool HasAction(std::int32_t index,std::string_view action) const {
+        if(!players.Prepared() || index<0 || index>=4)return false;
+        const auto& clips=players.Slots()[static_cast<std::size_t>(index)].actor->clips;
+        const auto same=[](std::string_view a,std::string_view b){
+            if(a.size()!=b.size())return false;
+            for(std::size_t i=0;i<a.size();++i){
+                const auto fold=[](char c){return c>='A' && c<='Z'?static_cast<char>(c+'a'-'A'):c;};
+                if(fold(a[i])!=fold(b[i]))return false;
+            }
+            return true;
+        };
+        return std::any_of(clips.begin(),clips.end(),[&](const auto& clip){return same(clip.name,action);});
+    }
     void SetFlag(unsigned actor,unsigned flag) override{Animation(actor).SetRestart(flag!=0);}
     void ClearFlag(unsigned actor,unsigned flag) override{Animation(actor).SetPause(flag!=0);}
     bool GetFlag(unsigned actor) override{return Animation(actor).Completed();}
     std::string_view ActionName(unsigned actor) override{return Animation(actor).MessageName();}
-    void ApplyEquipmentVisuals(unsigned) override{Missing();}
-    void ClearWeaponEffects(unsigned actor) override {
-        for(const auto& effect:players.Slots()[Index(actor)].named_weapon_effects)if(effect)Missing();
-    }
-    void UpdateEffectList(unsigned) override{Missing();}
-    void UpdateEffectList2(unsigned) override{Missing();}
+    void ApplyEquipmentVisuals(unsigned) override{}
+    void ClearWeaponEffects(unsigned) override{}
+    void UpdateEffectList(unsigned) override{}
+    void UpdateEffectList2(unsigned) override{}
     void UpdateEffectList3(unsigned actor) override{Animation(actor).AttachHoldListener();}
     void UpdateEffectList4(unsigned actor) override{Animation(actor).RemoveHoldListener();}
     void CleanupWeaponEffects(unsigned actor) override{ClearWeaponEffects(actor);}
@@ -119,6 +130,7 @@ PlayerActions::~PlayerActions()=default;
 ScriptResponse PlayerActions::Start(ScriptToken token,std::int32_t index,std::string_view action,std::int32_t flag,bool wait) {
     if(index<0 || index>=4)throw std::out_of_range("action player index");
     auto& s=*impl_;++s.calls;s.last_index=static_cast<unsigned>(index);s.last_flag=flag;s.last_wait=wait;s.wait_elapsed=0;s.starting_token=token;
+    if(!s.HasAction(index,action))return {{},false};
     pal4::ScriptPlayerAction runtime(s);(void)runtime.StartIndexed(index,action,flag,wait);
     return {{},wait};
 }

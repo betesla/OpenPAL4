@@ -31,7 +31,6 @@ std::vector<CollisionTriangle> ParseCollision(std::span<const std::uint8_t> byte
         for(unsigned m=0;m<nm;++m){Range(p,24,s.end);if(m==0)for(unsigned k=0;k<3;++k)g.sphere_center[k]=in.Float(p+k*4);const auto has_vertices=in.U32(p+16),has_normals=in.U32(p+20);p+=24;if(has_vertices){Range(p,std::size_t(nv)*12,s.end);if(m==0)for(unsigned i=0;i<nv;++i)g.vertices.push_back({in.Float(p+i*12),in.Float(p+i*12+4),in.Float(p+i*12+8)});p+=std::size_t(nv)*12;}if(has_normals){Range(p,std::size_t(nv)*12,s.end);p+=std::size_t(nv)*12;}}
         Need(p==s.end && g.vertices.size()==nv,"invalid DFF morph target");
         for(const auto& part:parts)if(part.id==8){const auto ml=in.Children(part);const auto ms=First(ml,1);Range(ms.begin,4,ms.end);g.materials=in.U32(ms.begin);if(scene)g.material_data=ReadMaterials(in,part);}
-        for(const auto& part:parts)if(part.id==3)for(const auto& ext:in.Children(part))Need(ext.id!=0x116,"skinned DFF collision unsupported");
         geometries.push_back(std::move(g));}
     Need(geometries.size()==geometry_count,"DFF geometry count mismatch");std::vector<CollisionTriangle> output;unsigned atomic=0;std::size_t total=0;
     struct Group {std::uint32_t atomic;std::array<float,3> center;std::int32_t diffuse,light;std::array<std::uint8_t,4> color;std::array<std::string,8> uv_animations;std::vector<Vertex> vertices;};

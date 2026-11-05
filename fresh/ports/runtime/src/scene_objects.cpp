@@ -108,7 +108,7 @@ struct SceneObjects::Impl final:pal4::IScriptObjectVisibilityRuntime,pal4::IGame
     std::uint32_t MovementAdapter() override{return 0x6000;}
     std::uint32_t RenderProperty(std::uint32_t object) override {
         const auto type=states[Index(object)].type;
-        Require(type==0 || type==3 || type==5 || type==6 || type==7 || type==8,"unknown GOB movement callback class");
+        Require(type<=10,"unknown GOB movement callback class");
         return pal4::GobSound::ReturnZero();
     }
     std::uint32_t SetClumpProperties(std::uint32_t adapter,std::uint32_t clump,std::uint32_t mode,std::uint32_t hard,std::uint32_t proximity,std::uint32_t callback) override {
@@ -128,7 +128,7 @@ struct SceneObjects::Impl final:pal4::IScriptObjectVisibilityRuntime,pal4::IGame
     }
     void RegisterMovement(std::size_t i){
         // 无模型的特效 GOB 只有变换根，没有可注册的碰撞几何。
-        if(movement_collision && !(states[i].type==8 && !states[i].actor) && objects[i].collision_shapes.empty())
+        if(movement_collision && states[i].actor && objects[i].collision_shapes.empty())
             (void)pal4::GobSound::ApplyClumpAdapterProperties(Handle(i),*this);
         states[i].movement_registered=true;
     }
@@ -166,10 +166,10 @@ struct SceneObjects::Impl final:pal4::IScriptObjectVisibilityRuntime,pal4::IGame
     void SetAnimationTime(std::uint32_t state,float time) override{Animation(state).Seek(time);}
     void SetObjectState(std::uint32_t object,std::uint32_t value) override {
         const auto index=Index(object);const auto type=states[index].type;
-        if(type==6)pal4::GobAction::SetVisibleAndAnimationState(object,value,*this);
+        if(type==6 && objects[index].playback)pal4::GobAction::SetVisibleAndAnimationState(object,value,*this);
         else if(type==8){
             Require(effects!=nullptr,"GOB effect playback owner is not bound");auto& target=objects[index];
-            if(!target.effect){const auto config=ReadGobEffectParameters(arena.catalog.gobs[index].config);Require(config.has_value(),"GOB effect configuration is missing");const auto& state=states[index];auto matrix=InstanceMatrix(state.position,state.rotation);for(unsigned c=0;c<3;++c)for(unsigned r=0;r<3;++r)matrix[c*4+r]*=state.scale;target.effect=std::make_unique<GobEffectInstance>(*config,matrix,*effects);}
+            if(!target.effect){const auto config=ReadGobEffectParameters(arena.catalog.gobs[index].config);Require(config.has_value(),"GOB effect configuration is missing");target.initial_effect_issue=effects->SupportIssue(config->name);if(!target.initial_effect_issue.empty()){states[index].visible=value;target.initial_effect_pending=false;return;}const auto& state=states[index];auto matrix=InstanceMatrix(state.position,state.rotation);for(unsigned c=0;c<3;++c)for(unsigned r=0;r<3;++r)matrix[c*4+r]*=state.scale;target.effect=std::make_unique<GobEffectInstance>(*config,matrix,*effects);}
             target.effect->SetVisible(value!=0);states[index].visible=value;target.initial_effect_pending=false;
         }else SetBaseVisible(object,value);
     }
@@ -229,16 +229,21 @@ SceneObjects::SceneObjects(const ArenaResources& arena,SceneMinimap& minimap,Gob
         state.position=source.position;state.rotation=source.rotation;object.words[0x188]=source.flags[1];object.words[0x18c]=source.flags[2];object.words[0x19c]=source.flags[3];
         pal4::GobObjectBase::ApplyParameters(Impl::Handle(i),s);
         for(std::size_t a=0;a<arena.actors.size();++a)if(arena.actors[a].gob_type && arena.actors[a].name==source.name){state.actor=a;break;}
-        if(state.type==6){
-            Require(state.actor.has_value(),"GOBAction model is missing");const auto bytes=s.read(source.resource_directory,source.model+".tab");Require(bytes.has_value(),"original GOBAction tab is missing");
-            const auto table=ReadAnimationTable(*bytes);Require(!table.empty(),"original GOBAction tab is empty");
-            object.initial_alias=table.front().first;object.initial_resource=table.front().second;
-            const auto& resource=object.initial_resource;Require(resource.ends_with(".anm") && resource.find_first_of("/\\") ==std::string::npos,"unsupported GOBAction animation resource");
-            const auto clip=resource.substr(0,resource.size()-4),directory=source.resource_directory,model=source.model;
-            object.playback=std::make_unique<ActorPlayback>(arena.actors[*state.actor].actor,model,[&s,directory,model](std::string_view member){
-                const auto prefix=model+"\\";Require(member.starts_with(prefix),"GOBAction message prefix mismatch");return s.read(directory,member.substr(prefix.size()));
-            });
-            Require(object.playback->Select(clip),"original GOBAction default animation is missing from cache");object.playback->SetRestart(true);
+        if(state.type==6 && state.actor){
+            const auto bytes=s.read(source.resource_directory,source.model+".tab");
+            if(bytes.has_value()){
+                const auto table=ReadAnimationTable(*bytes);
+                if(!table.empty()){
+                    object.initial_alias=table.front().first;object.initial_resource=table.front().second;
+                    const auto& resource=object.initial_resource;Require(resource.ends_with(".anm") && resource.find_first_of("/\\") ==std::string::npos,"unsupported GOBAction animation resource");
+                    const auto clip=resource.substr(0,resource.size()-4),directory=source.resource_directory,model=source.model;
+                    object.playback=std::make_unique<ActorPlayback>(arena.actors[*state.actor].actor,model,[&s,directory,model](std::string_view member){
+                        const auto prefix=model+"\\";Require(member.starts_with(prefix),"GOBAction message prefix mismatch");return s.read(directory,member.substr(prefix.size()));
+                    });
+                    if(object.playback->Select(clip))object.playback->SetRestart(true);
+                    else object.playback.reset();
+                }
+            }
             object.words[0x258]=static_cast<std::uint32_t>(s.ReadInt("PAL4_GameObject-action-default-play",1));
             object.words[0x25c]=static_cast<std::uint32_t>(s.ReadInt("PAL4_GameObject-action-play-times",0));
             object.words[0x260]=static_cast<std::uint32_t>(s.ReadInt("PAL4_GameObject-action-holding-end",0));
@@ -285,7 +290,7 @@ bool SceneObjects::ResetConfiguration(std::string_view name) {
     if(!object)return false;
     const auto index=s.Index(object);
     const auto type=s.states[index].type;
-    if(type!=0u && type!=3u)
+    if(type>10u)
         throw std::logic_error("GOB configuration reset type is not implemented: "+std::to_string(type));
     const auto previous=s.loading;
     s.loading=index;
@@ -348,7 +353,7 @@ bool SceneObjects::InteractionInRange(std::size_t i,Point3 position,float radius
 std::int32_t SceneObjects::InteractionEvent(std::size_t i) const{return std::bit_cast<std::int32_t>(impl_->objects.at(i).words.at(0x1b4));}
 bool SceneObjects::Interact(std::size_t index,ISceneEventScripts& scripts) {
     auto& s=*impl_;if(!s.Enabled(index))return false;
-    Require(s.states[index].type==0,"interaction for this GOB class is not bound");
+    Require(s.states[index].type<=10,"interaction for this GOB class is not bound");
     struct Runtime final:pal4::IGobNormalScriptRuntime {
         Impl& owner;ISceneEventScripts& scripts;std::size_t index;std::string declaration;
         Runtime(Impl& o,ISceneEventScripts& h,std::size_t i):owner(o),scripts(h),index(i){}
@@ -378,7 +383,7 @@ bool SceneObjects::Interact(std::size_t index,ISceneEventScripts& scripts) {
 }
 void SceneObjects::Advance(float seconds) {
     Require(std::isfinite(seconds) && seconds>=0,"invalid scene object elapsed");
-    for(std::size_t i=0;i<impl_->states.size();++i)if(impl_->states[i].type==6 && impl_->states[i].active)
+    for(std::size_t i=0;i<impl_->states.size();++i)if(impl_->states[i].type==6 && impl_->states[i].active && impl_->objects[i].playback)
         (void)pal4::GobAction::Update(Impl::Handle(i),seconds,static_cast<pal4::IGobActionUpdateRuntime&>(*impl_));
     for(std::size_t i=0;i<impl_->states.size();++i)impl_->SyncMovement(i);
     ++impl_->updates;

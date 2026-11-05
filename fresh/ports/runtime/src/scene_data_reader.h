@@ -37,12 +37,18 @@ public:
     std::uint32_t Peek() {const auto value=Word();offset_-=4;return value;}
     std::uint32_t Count(std::uint32_t limit=10000) {const auto count=Word();Require(count<=limit,"invalid scene record count");return count;}
     std::string Text() {
-        const auto length=Word();Require(length>0 && length<=4096 && length<=Remaining(),"invalid scene string length");
+        const auto length=Word();if(length==0)return {};
+        Require(length<=4096 && length<=Remaining(),"invalid scene string length");
         Require(bytes_[offset_+length-1]==0,"unterminated scene string");
         std::string result(reinterpret_cast<const char*>(bytes_.data()+offset_),length-1);offset_+=length;
         Require(result.find('\0')==std::string::npos,"embedded NUL in scene string");return result;
     }
     void Point(std::array<float,3>& point) {for(auto& x:point){x=std::bit_cast<float>(Word());Require(std::isfinite(x),"non-finite scene transform");}}
+    bool HasXmlAt(std::size_t skip_bytes) const {
+        if(Remaining()<skip_bytes+8)return false;
+        BinaryXmlConfig probe;std::size_t consumed{};
+        return probe.ParsePrefix(std::span<const std::uint8_t>(bytes_).subspan(offset_+skip_bytes),consumed) && consumed>0;
+    }
     BinaryXmlConfig Xml() {
         BinaryXmlConfig result;std::size_t consumed{};
         Require(result.ParsePrefix(std::span<const std::uint8_t>(bytes_).subspan(offset_),consumed) && consumed>0,"invalid scene XML");
@@ -52,7 +58,7 @@ public:
         normalized.clear();
         std::vector<std::pair<std::size_t,std::uint32_t>> patches;
         if(Remaining()<12 || Peek()!=16)return {};
-        const auto start=offset_;(void)Word();const auto size=Word();const auto version=Word();
+        const auto start=offset_;(void)Word();const auto size=Word();(void)Word();
         const auto body=offset_;
         const auto skip=[&](std::uint32_t expected) {
             Require(Word()==expected,"unexpected event clump child");const auto length=Word();(void)Word();
@@ -67,27 +73,28 @@ public:
         for(std::uint32_t i=0;i<atomics;++i) {
             Require(Word()==20,"missing event atomic");const auto atomic_size=Word();(void)Word();const auto atomic_body=offset_;
             skip(1);
-            Require(Word()==3,"missing event atomic extension");const auto extension_size=Word();const auto extension_version=Word();
-            // 此解包资源含四个无载荷游戏插件头，但祖先长度仍计入12+12+8+12。
-            // 只接受完整的已观察序列；不做任意字节扫描或固定减44的跳转。
-            bool empty_headers=extension_size==92 && version==0x1c020065 && extension_version==version && Remaining()>=48;
-            if(empty_headers) {
-                const auto saved=offset_;
-                for(const auto length:{12u,12u,8u,12u}) {
-                    const auto n=static_cast<std::uint32_t>((offset_-saved)/12);
-                    const auto id=Word(),declared=Word(),v=Word();
-                    if(id!=0x2101u+n || declared!=length || v!=version)empty_headers=false;
+            Require(Word()==3,"missing event atomic extension");const auto extension_size=Word();(void)Word();
+            const auto extension_body=offset_;
+            std::uint32_t declared_consumed=0;
+            std::uint32_t missing=0;
+            while(declared_consumed<extension_size) {
+                Require(Remaining()>=12 && extension_size-declared_consumed>=12,"truncated event atomic extension");
+                const auto plugin_pos=offset_;
+                const auto id=Word(),declared=Word();(void)Word();
+                Require(declared<=extension_size-declared_consumed-12,"truncated event atomic extension");
+                declared_consumed+=12u+declared;
+                if(id>=0x2101u && id<=0x2104u && (Remaining()<declared || (Remaining()>=12 && (Peek()==3u || Peek()==20u || (Peek()>=0x2101u && Peek()<=0x2104u))))) {
+                    missing+=declared;
+                    patches.emplace_back(plugin_pos+4,0u);
+                } else {
+                    Require(declared<=Remaining(),"truncated event atomic extension");
+                    offset_+=declared;
                 }
-                offset_=saved;
             }
-            const auto physical_size=empty_headers?48u:extension_size;
-            Require(physical_size<=Remaining(),"truncated event atomic extension");offset_+=physical_size;
-            const auto missing=empty_headers?44u:0u;
-            if(empty_headers) {
+            const auto physical_size=static_cast<std::uint32_t>(offset_-extension_body);
+            if(missing>0) {
                 patches.emplace_back(atomic_body-8,atomic_size-missing);
-                const auto extension_body=offset_-physical_size;
                 patches.emplace_back(extension_body-8,physical_size);
-                for(unsigned plugin=0;plugin<4;++plugin)patches.emplace_back(extension_body+plugin*12+4,0);
             }
             Require(offset_-atomic_body+missing==atomic_size,"event atomic size mismatch");omitted+=missing;
         }

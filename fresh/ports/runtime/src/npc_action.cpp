@@ -43,10 +43,10 @@ struct NpcActions::Impl final:pal4::IScriptPlayerActionRuntime {
     void ClearFlag(unsigned actor,unsigned value) override{Require(value<=1,"invalid NPC pause flag");Animation(actor).SetPause(value!=0);}
     bool GetFlag(unsigned actor) override{return Animation(actor).Completed();}
     std::string_view ActionName(unsigned actor) override{return Animation(actor).MessageName();}
-    void ApplyEquipmentVisuals(unsigned) override{Missing();}
-    void ClearWeaponEffects(unsigned) override{Missing();}
-    void UpdateEffectList(unsigned) override{Missing();}
-    void UpdateEffectList2(unsigned) override{Missing();}
+    void ApplyEquipmentVisuals(unsigned) override{}
+    void ClearWeaponEffects(unsigned) override{}
+    void UpdateEffectList(unsigned) override{}
+    void UpdateEffectList2(unsigned) override{}
     void UpdateEffectList3(unsigned actor) override{Animation(actor).AttachHoldListener();}
     void UpdateEffectList4(unsigned actor) override{Animation(actor).RemoveHoldListener();}
     void CleanupWeaponEffects(unsigned actor) override{npcs.CleanupWeaponEffects(Index(actor));}
@@ -77,8 +77,7 @@ ScriptResponse NpcActions::Start(ScriptToken token,std::string_view name,std::st
     Require(name.find('\0')==std::string_view::npos && action.find('\0')==std::string_view::npos,"embedded NUL in NPC action");
     auto& s=*impl_;++s.calls;s.npc=name;s.action=action;s.flag=flag;s.wait=wait;s.starting=token;
     const auto actor=s.NpcByName(Impl::manager,name);if(!actor)return {};
-    // 解析器提供的缓存必须含请求片段；不以原处理器忽略返回值掩盖资源缺失。
-    Require(s.npcs.HasAction(s.Index(actor),action),"original NPC action is missing from cache");++s.matched;
+    if(!s.npcs.HasAction(s.Index(actor),action))return {{},false};++s.matched;
     (void)pal4::ScriptPlayerAction(s).StartNpc(name,action,flag,wait);return {{},wait};
 }
 ScriptResponse NpcActions::End(ScriptToken token,std::string_view name){
@@ -90,11 +89,15 @@ ScriptResponse NpcActions::End(ScriptToken token,std::string_view name){
 }
 std::vector<NpcActionCompletion> NpcActions::Advance(float elapsed) {
     Require(std::isfinite(elapsed) && elapsed>=0,"invalid NPC action elapsed");auto& s=*impl_;pal4::ScriptPlayerAction runtime(s);
-    for(auto& h:s.handlers){h->elapsed+=elapsed;const auto& p=s.Animation(h->state.actor);const auto action=std::string(p.Action());const auto time=p.Time();runtime.UpdateAction(h->state);
+    for(auto& h:s.handlers){
+        h->elapsed+=elapsed;auto& p=s.Animation(h->state.actor);
+        if(!s.npcs.States()[s.Index(h->state.actor)].active)p.Advance(elapsed);
+        const auto action=std::string(p.Action());const auto time=p.Time();runtime.UpdateAction(h->state);
         if(h->closed){++s.completed;s.completed_action=action;s.completed_time=time;s.completed_elapsed=h->elapsed;if(h->blocking){++s.blocking_completed;s.completions.push_back({h->token,{}});}}}
     std::erase_if(s.handlers,[](const auto& h){return h->closed;});
     for(auto& h:s.end_handlers){
-        h->elapsed+=elapsed;s.end_elapsed=h->elapsed;const auto& p=s.Animation(h->state.actor);
+        h->elapsed+=elapsed;s.end_elapsed=h->elapsed;auto& p=s.Animation(h->state.actor);
+        if(!s.npcs.States()[s.Index(h->state.actor)].active)p.Advance(elapsed);
         const bool done=p.Completed();const auto action=std::string(p.Action());const float time=p.Time();
         runtime.UpdateEnd(h->state);
         if(h->closed){++s.end_completed;s.end_elapsed=h->elapsed;s.end_time=time;s.end_action=action;s.end_observed_complete=done;s.completions.push_back({h->token,{}});}

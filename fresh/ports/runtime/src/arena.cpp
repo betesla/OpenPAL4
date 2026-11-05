@@ -9,9 +9,16 @@ namespace {
 void Require(bool valid,const char* message){if(!valid)throw std::runtime_error(message);}
 std::uint32_t Word(std::istream& input){unsigned char b[4]{};Require(bool(input.read(reinterpret_cast<char*>(b),4)),"truncated arena description");return b[0]|(std::uint32_t(b[1])<<8)|(std::uint32_t(b[2])<<16)|(std::uint32_t(b[3])<<24);}
 std::string Text(std::istream& input){const auto n=Word(input);Require(n>0 && n<=4096,"invalid arena text length");std::string s(n,'\0');Require(bool(input.read(s.data(),n)) && s.back()==0,"invalid arena text");s.pop_back();Require(s.find('\0')==std::string::npos,"embedded arena NUL");return s;}
-bool Name(std::string_view s){return !s.empty() && s.size()<=64 && s.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")==std::string_view::npos;}
-template<class T> T Asset(const ArenaAssetReader& read,const std::string& name,T(*parse)(std::istream&)) {
-    const auto bytes=read(name);Require(!bytes.empty() && bytes.size()<=384u*1024*1024,"invalid arena asset length");
+bool Name(std::string_view s){return !s.empty() && s.size()<=64 && s.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_- ()+~.")==std::string_view::npos;}
+template<class T> T Asset(const ArenaAssetReader& read,const std::string& name,T(*parse)(std::istream&),bool optional_if_missing=false) {
+    std::vector<std::uint8_t> bytes;
+    try {
+        bytes=read(name);
+    } catch(const std::exception& error) {
+        if(optional_if_missing && std::string_view(error.what()).starts_with("package member missing:"))return T{};
+        throw;
+    }
+    Require(!bytes.empty() && bytes.size()<=384u*1024*1024,"invalid arena asset length");
     std::istringstream input(std::string(reinterpret_cast<const char*>(bytes.data()),bytes.size()));
     try{return parse(input);}catch(const std::exception& error){throw std::runtime_error(name+": "+error.what());}
 }
@@ -40,11 +47,11 @@ ArenaResources LoadArenaResources(std::string_view world,std::string_view scene,
         {auto mesh=original_environment?original_environment(kind):Asset(read,base+"environment/"+kind+".p4s",ReadScene);
         mesh.saturation=result.world.saturation;mesh.brightness=result.world.brightness;
         result.environment.push_back({kind,std::move(mesh)});}
-    result.catalog.npcs=Asset(read,base+"npcInfo.npc",ReadSceneNpcs);
-    result.catalog.gobs=Asset(read,base+"GameObjs.gob",ReadSceneGobs);
-    result.catalog.monsters=Asset(read,base+"mstInfo.mst",ReadSceneMonsters);
+    result.catalog.npcs=Asset(read,base+"npcInfo.npc",ReadSceneNpcs,true);
+    result.catalog.gobs=Asset(read,base+"GameObjs.gob",ReadSceneGobs,true);
+    result.catalog.monsters=Asset(read,base+"mstInfo.mst",ReadSceneMonsters,true);
     result.monsters_verified_empty=result.catalog.monsters.empty();
-    result.catalog.events=Asset(read,base+std::string(scene)+".evf",ReadSceneEvents);
+    result.catalog.events=Asset(read,base+std::string(scene)+".evf",ReadSceneEvents,true);
     if(result.description.event_collision_cache) {
         result.event_collisions.resize(result.catalog.events.size());
         for(std::size_t i=0;i<result.catalog.events.size();++i)if(!result.catalog.events[i].clump.empty()) {
@@ -53,7 +60,7 @@ ArenaResources LoadArenaResources(std::string_view world,std::string_view scene,
             result.event_collisions[i]=std::move(geometry);
         }
     }
-    result.catalog.paths=Asset(read,base+"pathway.pwy",ReadScenePaths);
+    result.catalog.paths=Asset(read,base+"pathway.pwy",ReadScenePaths,true);
     for(const auto& camera:result.description.camera_files)
         result.catalog.cameras.emplace_back(camera,Asset(read,base+camera,ReadSceneCameras));
     for(const auto& npc:result.catalog.npcs) {
@@ -61,15 +68,30 @@ ArenaResources LoadArenaResources(std::string_view world,std::string_view scene,
         ArenaActor actor;actor.name=npc.name;actor.animation=npc.DefaultAction().value_or("");actor.position=npc.position;actor.rotation=npc.rotation;actor.state=npc.flags[0];
         actor.actor=original_npc?original_npc(npc):Asset(read,base+"entities/"+npc.name+".p4a",ReadActor);
         if(!actor.animation.empty()) {
-            bool found=false;for(const auto& clip:actor.actor.clips)if(clip.name==actor.animation)found=true;
-            Require(found,"NPC default animation is missing");
+            const auto ieq=[](std::string_view a,std::string_view b){
+                if(a.size()!=b.size())return false;
+                for(std::size_t i=0;i<a.size();++i){
+                    char ca=a[i]>='a'&&a[i]<='z'?char(a[i]-32):a[i];
+                    char cb=b[i]>='a'&&b[i]<='z'?char(b[i]-32):b[i];
+                    if(ca!=cb)return false;
+                }
+                return true;
+            };
+            bool found=false;
+            for(const auto& clip:actor.actor.clips)if(ieq(clip.name,actor.animation)){actor.animation=clip.name;found=true;break;}
+            if(!found){
+                for(const auto& clip:actor.actor.clips)if(ieq(clip.name,"C01")){actor.animation=clip.name;found=true;break;}
+            }
+            if(!found){
+                actor.animation=actor.actor.clips.empty()?std::string{}:actor.actor.clips.front().name;
+            }
         }
         result.actors.push_back(std::move(actor));
     }
     for(const auto& gob:result.catalog.gobs) {
         // 特效实体保留完整配置，渲染绑定将在特效服务中完成。
-        if(gob.type==8)continue;
-        Require((gob.type==0 || gob.type==3 || gob.type==5 || gob.type==6 || gob.type==7) && Name(gob.name),"unsupported arena GOB actor type");
+        if(gob.type==8 || gob.model.empty())continue;
+        Require(gob.type<=10 && Name(gob.name),"unsupported arena GOB actor type");
         ArenaActor actor;actor.gob_type=gob.type;actor.name=gob.name;actor.position=gob.position;actor.rotation=gob.rotation;actor.state=gob.flags[0];
         if(const auto* scale=gob.config.Root().FindAttribute("PAL4-GameObject-object-scale"))actor.scale=scale->ToFloat(1);
         actor.actor=original_gob?original_gob(gob):Asset(read,base+"entities/"+gob.name+".p4a",ReadActor);

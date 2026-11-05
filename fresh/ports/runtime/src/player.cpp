@@ -147,14 +147,23 @@ void PlayerRoster::EnterScene(std::string_view world,std::string_view scene,std:
     for(const auto& clip:selected.actor->clips)if(clip.name=="C01")found=true;
     Require(found,"initial player C01 animation is missing");
     world_=world;scene_=scene;
-    for(auto& slot:slots_){slot.active=false;slot.world.clear();slot.scene.clear();}
+    for(auto& slot:slots_){slot.active=false;slot.world.clear();slot.scene.clear();if(slot.animation.empty())slot.animation="C01";}
     selected.world=world;selected.scene=scene;selected.animation="C01";selected.active=true;
 }
 void PlayerRoster::SelectAction(std::uint32_t index,std::string_view action) {
     Require(prepared_ && index<slots_.size(),"player action requires prepared slot");
     auto& player=slots_[index];
-    Require(std::any_of(player.actor->clips.begin(),player.actor->clips.end(),[&](const auto& clip){return clip.name==action;}),"player action is missing");
-    player.animation=action;
+    const auto same=[](std::string_view a,std::string_view b){
+        if(a.size()!=b.size())return false;
+        for(std::size_t i=0;i<a.size();++i){
+            const auto fold=[](char c){return c>='A' && c<='Z'?static_cast<char>(c+'a'-'A'):c;};
+            if(fold(a[i])!=fold(b[i]))return false;
+        }
+        return true;
+    };
+    const auto it=std::find_if(player.actor->clips.begin(),player.actor->clips.end(),[&](const auto& clip){return same(clip.name,action);});
+    Require(it!=player.actor->clips.end(),"player action is missing");
+    player.animation=it->name;
 }
 void PlayerRoster::SetPosition(std::uint32_t index,std::array<float,3> position) {
     Require(prepared_ && index<slots_.size(),"player position requires prepared slot");
